@@ -49,7 +49,25 @@ make deploy
 
 VPS では事前に `/etc/dns-root-diff/config.yaml` を配置し、`dns-root-diff` ユーザーが読み取める必要がある。
 
+## ブランチ戦略
+
+- `main` への直接 commit は禁止
+- 機能ごとに feature ブランチを切る: `git checkout -b feat/xxx`
+- PR を作成し、GitHub Actions CI (`ci`) が PASS することを必須とする
+- CI 通過後に main へ merge する
+- main ブランチは branch protection rule で直接 push を防止
+
+```bash
+# 作業例
+git checkout -b feat/update-notifier
+# ... 変更 ...
+git commit -m "feat: update notifier"
+git push -u origin feat/update-notifier
+# GitHub で PR 作成、CI 通過後に merge
+```
+
 ## 注意事項
 
 - 設定ファイルは秘密情報を含む可能性があるため、パーミッションを適切に管理する。
 - VPS では SELinux が有効な場合があるため、バイナリと systemd unit ファイルのラベルを `restorecon` で修正する。
+- main への直接 push を防ぐため、GitHub の branch protection rule で "Require a pull request before merging" を有効化する。
