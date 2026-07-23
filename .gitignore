@@ -30,3 +30,13 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Project specific
+bin/
+/dns-root-diff
+data/
+config.yaml
+.DS_Store
+.idea/
+.vscode/
+*.swp
