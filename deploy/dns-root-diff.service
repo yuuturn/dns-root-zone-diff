@@ -1,0 +1,22 @@
+[Unit]
+Description=DNS Root Zone Change Notification
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dns-root-diff -config /etc/dns-root-diff/config.yaml
+Restart=on-failure
+RestartSec=30
+User=dns-root-diff
+Group=dns-root-diff
+# データ保存先
+StateDirectory=dns-root-diff
+# セキュリティ強化
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/dns-root-diff
+
+[Install]
+WantedBy=multi-user.target
