@@ -16,6 +16,9 @@ echo "==> Installing and restarting service..."
 ssh "${VPS}" "
   sudo install -o root -g root -m 755 /tmp/${BINARY} ${REMOTE_BIN}
   rm /tmp/${BINARY}
+  if command -v restorecon >/dev/null 2>&1; then
+    sudo restorecon -v ${REMOTE_BIN} /etc/systemd/system/${SERVICE} 2>/dev/null || true
+  fi
   sudo systemctl daemon-reload
   sudo systemctl restart ${BINARY}
   sleep 2
