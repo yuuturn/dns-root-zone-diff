@@ -1,4 +1,4 @@
-# dns-root-diff
+# DNS Root Zone Diff
 
 DNS root zone の変更を機械的に検知して通知するツール。
 
