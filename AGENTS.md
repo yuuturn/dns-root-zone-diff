@@ -1,12 +1,55 @@
-# General
-日本語で会話します。
-作りたいものは、DNS root zone file change notificationです。
-つまりDNS root zoneを6時間に一度に取得して差分チェックして、差分はXやslackなどに通知するといった物になります。
+# dns-root-diff
 
-## 実装について
-実装は、Go言語で実装したいですが、他に良いものがあれば変更します。
-コードはgitで管理し、remomte repoはGitHubとします。
-テスト駆動開発(TDD)での開発手法を撮ります。
-formatter/Linter,型チェックなどをgolangのbest practiceを利用したいです。
-また、pre-commitでtestの通っていないものはcommitできず、GitHub ActionでもCIを回したい。
+DNS root zone file change notification ツール。
 
+https://www.internic.net/domain/root.zone から DNS root zone ファイルを 6時間に一度取得し、前回との差分を検出して、Slack または X (Twitter) に通知する。
+
+## コミュニケーション
+
+- 日本語で会話する。
+
+## 実装
+
+- 言語: Go
+- バージョン: 1.26.5
+- リモートリポジトリ: GitHub (https://github.com/yuuturn/dns-root-zone-diff)
+- デプロイ先: VPS (vps1.xsv.yfujii.net, Rocky Linux 10.2, x86_64, systemd 257)
+- デプロイ方式: macOS arm64 で GOOS=linux GOARCH=amd64 クロスコンパイル → scp → systemd
+- 開発手法: TDD (テスト駆動開発)
+- フォーマッター / Linter / 型チェック: golangci-lint v2, go vet, gofmt
+- pre-commit: gofmt, go vet, go test, golangci-lint をフックで実行
+- CI: GitHub Actions (テスト + lint)
+
+## アーキテクチャ
+
+- `cmd/dns-root-diff/main.go`: エントリーポイント、定期実行ループ
+- `internal/fetcher`: HTTP で root zone 取得
+- `internal/zone`: zone ファイルパーサー
+- `internal/diff`: 新旧レコード差分検出 + カテゴリ分類
+- `internal/store`: ローカルディスクへのスナップショット保存
+- `internal/notify`: Notifier インターフェース、Slack Webhook、X API v2
+- `internal/config`: YAML 設定 + 環境変数オーバーライド
+- `deploy/`: systemd unit とデプロイシェル
+
+## 実行方法
+
+```bash
+# 単発実行
+./bin/dns-root-diff -config config.yaml -once
+
+# 定期実行
+./bin/dns-root-diff -config config.yaml
+```
+
+## デプロイ
+
+```bash
+make deploy
+```
+
+VPS では事前に `/etc/dns-root-diff/config.yaml` を配置し、`dns-root-diff` ユーザーが読み取める必要がある。
+
+## 注意事項
+
+- 設定ファイルは秘密情報を含む可能性があるため、パーミッションを適切に管理する。
+- VPS では SELinux が有効な場合があるため、バイナリと systemd unit ファイルのラベルを `restorecon` で修正する。
