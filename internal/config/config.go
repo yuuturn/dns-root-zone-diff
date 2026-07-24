@@ -28,6 +28,11 @@ type TwitterConfig struct {
 	APISecret    string `yaml:"api_secret"`
 	AccessToken  string `yaml:"access_token"`
 	AccessSecret string `yaml:"access_secret"`
+	// OAuth 2.0 User Access Token (Bearer). Set when using OAuth 2.0 instead of OAuth 1.0a.
+	OAuth2AccessToken  string `yaml:"oauth2_access_token"`
+	OAuth2RefreshToken string `yaml:"oauth2_refresh_token"`
+	OAuth2ClientID     string `yaml:"oauth2_client_id"`
+	OAuth2ClientSecret string `yaml:"oauth2_client_secret"`
 }
 
 // Default はデフォルト設定を返す。
@@ -86,7 +91,19 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("TWITTER_ACCESS_SECRET"); v != "" {
 		cfg.Twitter.AccessSecret = v
 	}
-	if cfg.Twitter.APIKey != "" && cfg.Twitter.AccessToken != "" {
+	if v := os.Getenv("TWITTER_OAUTH2_ACCESS_TOKEN"); v != "" {
+		cfg.Twitter.OAuth2AccessToken = v
+	}
+	if v := os.Getenv("TWITTER_OAUTH2_REFRESH_TOKEN"); v != "" {
+		cfg.Twitter.OAuth2RefreshToken = v
+	}
+	if v := os.Getenv("TWITTER_OAUTH2_CLIENT_ID"); v != "" {
+		cfg.Twitter.OAuth2ClientID = v
+	}
+	if v := os.Getenv("TWITTER_OAUTH2_CLIENT_SECRET"); v != "" {
+		cfg.Twitter.OAuth2ClientSecret = v
+	}
+	if (cfg.Twitter.APIKey != "" && cfg.Twitter.AccessToken != "") || cfg.Twitter.OAuth2AccessToken != "" {
 		cfg.Twitter.Enabled = true
 	}
 }

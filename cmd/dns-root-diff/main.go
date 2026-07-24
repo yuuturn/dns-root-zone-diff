@@ -70,8 +70,12 @@ func buildNotifiers(cfg config.Config) []notify.Notifier {
 	if cfg.Slack.Enabled && cfg.Slack.WebhookURL != "" {
 		notifiers = append(notifiers, notify.NewSlackNotifier(cfg.Slack.WebhookURL))
 	}
-	if cfg.Twitter.Enabled && cfg.Twitter.APIKey != "" && cfg.Twitter.AccessToken != "" {
-		notifiers = append(notifiers, notify.NewTwitterNotifier(cfg.Twitter.APIKey, cfg.Twitter.APISecret, cfg.Twitter.AccessToken, cfg.Twitter.AccessSecret))
+	if cfg.Twitter.Enabled {
+		if cfg.Twitter.OAuth2AccessToken != "" {
+			notifiers = append(notifiers, notify.NewTwitterOAuth2Notifier(cfg.Twitter.OAuth2AccessToken))
+		} else if cfg.Twitter.APIKey != "" && cfg.Twitter.AccessToken != "" {
+			notifiers = append(notifiers, notify.NewTwitterNotifier(cfg.Twitter.APIKey, cfg.Twitter.APISecret, cfg.Twitter.AccessToken, cfg.Twitter.AccessSecret))
+		}
 	}
 	return notifiers
 }

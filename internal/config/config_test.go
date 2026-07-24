@@ -34,6 +34,10 @@ twitter:
   api_secret: "secret"
   access_token: "token"
   access_secret: "tokensecret"
+  oauth2_access_token: "oauth2token"
+  oauth2_refresh_token: "refreshtoken"
+  oauth2_client_id: "clientid"
+  oauth2_client_secret: "clientsecret"
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -59,6 +63,12 @@ twitter:
 	}
 	if !cfg.Twitter.Enabled {
 		t.Error("Twitter.Enabled = false, want true")
+	}
+	if cfg.Twitter.OAuth2AccessToken != "oauth2token" {
+		t.Errorf("Twitter.OAuth2AccessToken = %q", cfg.Twitter.OAuth2AccessToken)
+	}
+	if cfg.Twitter.OAuth2ClientID != "clientid" {
+		t.Errorf("Twitter.OAuth2ClientID = %q", cfg.Twitter.OAuth2ClientID)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -19,22 +20,35 @@ import (
 )
 
 // TwitterNotifier は X (Twitter) API v2 にツイートを投稿する。
+// OAuth 1.0a (apiKey 等) または OAuth 2.0 User Access Token (bearerToken) をサポートする。
 type TwitterNotifier struct {
 	apiKey       string
 	apiSecret    string
 	accessToken  string
 	accessSecret string
+	bearerToken  string // OAuth 2.0 User Access Token
 	client       *http.Client
 	apiURL       string // テスト用にオーバーライド可能
 }
 
-// NewTwitterNotifier は TwitterNotifier を生成する。
+// NewTwitterNotifier は OAuth 1.0a 用の TwitterNotifier を生成する。
 func NewTwitterNotifier(apiKey, apiSecret, accessToken, accessSecret string) *TwitterNotifier {
 	return &TwitterNotifier{
 		apiKey:       apiKey,
 		apiSecret:    apiSecret,
 		accessToken:  accessToken,
 		accessSecret: accessSecret,
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+		apiURL: "https://api.twitter.com/2/tweets",
+	}
+}
+
+// NewTwitterOAuth2Notifier は OAuth 2.0 User Access Token (Bearer) 用の TwitterNotifier を生成する。
+func NewTwitterOAuth2Notifier(accessToken string) *TwitterNotifier {
+	return &TwitterNotifier{
+		bearerToken: accessToken,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -78,8 +92,11 @@ func (tw *TwitterNotifier) postTweet(ctx context.Context, text string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	authHeader := tw.oauthHeader(http.MethodPost, tw.apiURL)
-	req.Header.Set("Authorization", authHeader)
+	if tw.bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+tw.bearerToken)
+	} else {
+		req.Header.Set("Authorization", tw.oauthHeader(http.MethodPost, tw.apiURL))
+	}
 
 	resp, err := tw.client.Do(req)
 	if err != nil {
@@ -88,7 +105,8 @@ func (tw *TwitterNotifier) postTweet(ctx context.Context, text string) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("twitter API returned status %d", resp.StatusCode)
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("twitter API returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
 	return nil
