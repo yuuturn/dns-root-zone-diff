@@ -63,6 +63,34 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
+// SaveOAuth2Tokens は config ファイル上の OAuth2 トークンを更新して書き戻す。
+// path が空の場合は何もしない。
+func SaveOAuth2Tokens(path, accessToken, refreshToken string) error {
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read config file: %w", err)
+	}
+	cfg := Default()
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("parse config file: %w", err)
+	}
+	cfg.Twitter.OAuth2AccessToken = accessToken
+	if refreshToken != "" {
+		cfg.Twitter.OAuth2RefreshToken = refreshToken
+	}
+	out, err := yaml.Marshal(&cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.WriteFile(path, out, 0600); err != nil {
+		return fmt.Errorf("write config file: %w", err)
+	}
+	return nil
+}
+
 func applyEnv(cfg *Config) {
 	if v := os.Getenv("DNS_ROOT_DIFF_ZONE_URL"); v != "" {
 		cfg.ZoneURL = v

@@ -94,6 +94,41 @@ func TestLoadEnvOverride(t *testing.T) {
 	}
 }
 
+func TestSaveOAuth2Tokens(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+zone_url: "https://example.com/root.zone"
+fetch_interval: 1h0m0s
+data_dir: "/tmp/zones"
+twitter:
+  enabled: true
+  oauth2_access_token: "old-access"
+  oauth2_refresh_token: "old-refresh"
+  oauth2_client_id: "clientid"
+  oauth2_client_secret: "clientsecret"
+`
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveOAuth2Tokens(path, "new-access", "new-refresh"); err != nil {
+		t.Fatalf("SaveOAuth2Tokens() error = %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Twitter.OAuth2AccessToken != "new-access" {
+		t.Errorf("OAuth2AccessToken = %q, want new-access", cfg.Twitter.OAuth2AccessToken)
+	}
+	if cfg.Twitter.OAuth2RefreshToken != "new-refresh" {
+		t.Errorf("OAuth2RefreshToken = %q, want new-refresh", cfg.Twitter.OAuth2RefreshToken)
+	}
+	if cfg.Twitter.OAuth2ClientID != "clientid" {
+		t.Errorf("OAuth2ClientID = %q, want clientid", cfg.Twitter.OAuth2ClientID)
+	}
+}
+
 func TestLoadNoFile(t *testing.T) {
 	cfg, err := Load("")
 	if err != nil {
