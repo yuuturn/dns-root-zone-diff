@@ -35,27 +35,33 @@ func run() error {
 	}
 
 	if *once {
-		return runOnce(context.Background(), cfg)
+		return runOnce(context.Background(), cfg, *configPath)
 	}
 
-	return runLoop(cfg)
+	return runLoop(cfg, *configPath)
 }
 
-func runLoop(cfg config.Config) error {
+func runLoop(cfg config.Config, configPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	ticker := time.NewTicker(cfg.FetchInterval)
 	defer ticker.Stop()
 
-	if err := runOnce(ctx, cfg); err != nil {
+	if err := runOnce(ctx, cfg, configPath); err != nil {
 		fmt.Fprintf(os.Stderr, "initial run failed: %v\n", err)
 	}
 
 	for {
 		select {
 		case <-ticker.C:
-			if err := runOnce(ctx, cfg); err != nil {
+			// Reload config each tick so refreshed OAuth tokens are picked up.
+			if configPath != "" {
+				if reloaded, err := config.Load(configPath); err == nil {
+					cfg = reloaded
+				}
+			}
+			if err := runOnce(ctx, cfg, configPath); err != nil {
 				fmt.Fprintf(os.Stderr, "run failed: %v\n", err)
 			}
 		case <-ctx.Done():
@@ -65,14 +71,23 @@ func runLoop(cfg config.Config) error {
 	}
 }
 
-func buildNotifiers(cfg config.Config) []notify.Notifier {
+func buildNotifiers(cfg config.Config, configPath string) []notify.Notifier {
 	var notifiers []notify.Notifier
 	if cfg.Slack.Enabled && cfg.Slack.WebhookURL != "" {
 		notifiers = append(notifiers, notify.NewSlackNotifier(cfg.Slack.WebhookURL))
 	}
 	if cfg.Twitter.Enabled {
 		if cfg.Twitter.OAuth2AccessToken != "" {
-			notifiers = append(notifiers, notify.NewTwitterOAuth2Notifier(cfg.Twitter.OAuth2AccessToken))
+			persist := func(access, refresh string) error {
+				return config.SaveOAuth2Tokens(configPath, access, refresh)
+			}
+			notifiers = append(notifiers, notify.NewTwitterOAuth2Notifier(
+				cfg.Twitter.OAuth2AccessToken,
+				cfg.Twitter.OAuth2RefreshToken,
+				cfg.Twitter.OAuth2ClientID,
+				cfg.Twitter.OAuth2ClientSecret,
+				persist,
+			))
 		} else if cfg.Twitter.APIKey != "" && cfg.Twitter.AccessToken != "" {
 			notifiers = append(notifiers, notify.NewTwitterNotifier(cfg.Twitter.APIKey, cfg.Twitter.APISecret, cfg.Twitter.AccessToken, cfg.Twitter.AccessSecret))
 		}
@@ -80,7 +95,7 @@ func buildNotifiers(cfg config.Config) []notify.Notifier {
 	return notifiers
 }
 
-func runOnce(ctx context.Context, cfg config.Config) error {
+func runOnce(ctx context.Context, cfg config.Config, configPath string) error {
 	fmt.Printf("fetching zone from %s\n", cfg.ZoneURL)
 
 	f := fetcher.New(cfg.ZoneURL, 2*time.Minute)
@@ -114,7 +129,7 @@ func runOnce(ctx context.Context, cfg config.Config) error {
 		fmt.Println("no changes detected")
 	} else {
 		fmt.Printf("detected %d changes\n", len(changes))
-		notifiers := buildNotifiers(cfg)
+		notifiers := buildNotifiers(cfg, configPath)
 		for _, n := range notifiers {
 			if err := n.Notify(ctx, changes); err != nil {
 				fmt.Fprintf(os.Stderr, "notify %s failed: %v\n", n.Name(), err)

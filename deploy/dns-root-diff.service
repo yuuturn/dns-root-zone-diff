@@ -16,7 +16,7 @@ StateDirectory=dns-root-diff
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/dns-root-diff
+ReadWritePaths=/var/lib/dns-root-diff /etc/dns-root-diff
 
 [Install]
 WantedBy=multi-user.target

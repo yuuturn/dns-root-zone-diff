@@ -28,7 +28,7 @@ func TestRunOnceInitialRun(t *testing.T) {
 		FetchInterval: 0,
 	}
 
-	if err := runOnce(context.Background(), cfg); err != nil {
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
 		t.Fatalf("runOnce() error = %v", err)
 	}
 
@@ -73,10 +73,10 @@ func TestRunOnceDetectsChanges(t *testing.T) {
 		FetchInterval: 0,
 	}
 
-	if err := runOnce(context.Background(), cfg); err != nil {
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
 		t.Fatalf("first runOnce() error = %v", err)
 	}
-	if err := runOnce(context.Background(), cfg); err != nil {
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
 		t.Fatalf("second runOnce() error = %v", err)
 	}
 
@@ -90,7 +90,7 @@ func TestRunOnceDetectsChanges(t *testing.T) {
 }
 
 func TestRunOnceNoChanges(t *testing.T) {
-	zoneData := ".\t86400\tIN\tNS\ta.root-servers.net.\n"
+	zoneData := ".	86400	IN	NS	a.root-servers.net.\n"
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(zoneData))
@@ -104,10 +104,10 @@ func TestRunOnceNoChanges(t *testing.T) {
 		FetchInterval: 0,
 	}
 
-	if err := runOnce(context.Background(), cfg); err != nil {
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
 		t.Fatalf("first runOnce() error = %v", err)
 	}
-	if err := runOnce(context.Background(), cfg); err != nil {
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
 		t.Fatalf("second runOnce() error = %v", err)
 	}
 }
