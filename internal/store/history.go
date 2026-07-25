@@ -123,20 +123,20 @@ func (h *History) Append(e Entry) error {
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("write history entry: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("close temp file: %w", err)
 	}
 	if err := os.Chmod(tmpName, 0644); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("chmod history entry: %w", err)
 	}
 	if err := os.Rename(tmpName, filepath.Join(h.dir, e.ID+".json")); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("rename history entry: %w", err)
 	}
 	return nil

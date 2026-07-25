@@ -137,7 +137,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		name = "index.html"
 	} else {
-		f.Close()
+		_ = f.Close()
 	}
 
 	// Vite の成果物はコンテンツハッシュ付きファイル名のため長期キャッシュできる。

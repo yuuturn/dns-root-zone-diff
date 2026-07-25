@@ -72,7 +72,7 @@ func getJSON(t *testing.T, url string, wantStatus int) map[string]any {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != wantStatus {
 		t.Fatalf("GET %s status = %d, want %d", url, resp.StatusCode, wantStatus)
 	}
@@ -197,7 +197,7 @@ func TestStaticFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -217,7 +217,7 @@ func TestSPAFallback(t *testing.T) {
 		}
 		body := make([]byte, 64)
 		n, _ := resp.Body.Read(body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("GET %s status = %d, want 200", path, resp.StatusCode)
 		}
@@ -238,7 +238,7 @@ func TestAPIUnknownPathNotSPA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("GET /api/nonexistent status = %d, want 404", resp.StatusCode)
 	}
