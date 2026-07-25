@@ -83,7 +83,8 @@ function RDataCell({ change }: { change: Change }) {
 
 function formatRData(ttl?: number, rdata?: string): string {
   const parts: string[] = [];
-  if (ttl !== undefined && ttl > 0) parts.push(`TTL ${ttl}`);
+  // TTL 0 は有効な値なので、フィールドが存在する限り表示する
+  if (ttl !== undefined) parts.push(`TTL ${ttl}`);
   if (rdata) parts.push(rdata);
   return parts.join("  ") || "-";
 }

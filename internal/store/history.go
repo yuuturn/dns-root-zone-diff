@@ -43,15 +43,18 @@ type Summary struct {
 }
 
 // ChangeJSON は diff.Change の JSON 表現。
+// TTL はその側にレコードが存在する場合のみ持つ (ポインター)。
+// TTL 0 は DNS として有効な値のため、omitempty で欠落しないよう
+// 「存在しない」は nil で表現する。
 type ChangeJSON struct {
-	Kind     string `json:"kind"`
-	Category string `json:"category"`
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	OldTTL   uint32 `json:"old_ttl,omitempty"`
-	NewTTL   uint32 `json:"new_ttl,omitempty"`
-	OldRData string `json:"old_rdata,omitempty"`
-	NewRData string `json:"new_rdata,omitempty"`
+	Kind     string  `json:"kind"`
+	Category string  `json:"category"`
+	Name     string  `json:"name"`
+	Type     string  `json:"type"`
+	OldTTL   *uint32 `json:"old_ttl,omitempty"`
+	NewTTL   *uint32 `json:"new_ttl,omitempty"`
+	OldRData string  `json:"old_rdata,omitempty"`
+	NewRData string  `json:"new_rdata,omitempty"`
 }
 
 // NewEntry は検知時刻・新旧シリアル・変更群から Entry を組み立てる。
@@ -79,16 +82,26 @@ func NewEntry(detectedAt time.Time, oldSerial, newSerial string, changes []diff.
 		}
 		cat := diff.Categorize(c).String()
 		e.Summary.ByCategory[cat]++
-		e.Changes = append(e.Changes, ChangeJSON{
+		cj := ChangeJSON{
 			Kind:     c.Kind.String(),
 			Category: cat,
 			Name:     c.Name,
 			Type:     c.Type,
-			OldTTL:   c.OldTTL,
-			NewTTL:   c.NewTTL,
 			OldRData: c.OldRData,
 			NewRData: c.NewRData,
-		})
+		}
+		// レコードが存在する側の TTL のみ記録する (added に旧側はない、等)。
+		oldTTL, newTTL := c.OldTTL, c.NewTTL
+		switch c.Kind {
+		case diff.ChangeAdded:
+			cj.NewTTL = &newTTL
+		case diff.ChangeRemoved:
+			cj.OldTTL = &oldTTL
+		case diff.ChangeModified:
+			cj.OldTTL = &oldTTL
+			cj.NewTTL = &newTTL
+		}
+		e.Changes = append(e.Changes, cj)
 	}
 	return e
 }

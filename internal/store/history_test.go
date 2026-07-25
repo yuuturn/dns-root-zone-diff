@@ -1,10 +1,12 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,8 +54,48 @@ func TestNewEntry(t *testing.T) {
 		t.Fatalf("len(Changes) = %d, want 4", len(e.Changes))
 	}
 	c := e.Changes[0]
-	if c.Kind != "added" || c.Category != "delegation" || c.Name != "newgtld." || c.NewTTL != 172800 {
+	if c.Kind != "added" || c.Category != "delegation" || c.Name != "newgtld." {
 		t.Errorf("Changes[0] = %+v", c)
+	}
+	if c.NewTTL == nil || *c.NewTTL != 172800 {
+		t.Errorf("Changes[0].NewTTL = %v, want 172800", c.NewTTL)
+	}
+	// added 変更に旧側は存在しないため old_ttl は持たない
+	if c.OldTTL != nil {
+		t.Errorf("Changes[0].OldTTL = %v, want nil for added change", c.OldTTL)
+	}
+}
+
+func TestNewEntryTTLZeroPreserved(t *testing.T) {
+	changes := []diff.Change{
+		{Kind: diff.ChangeModified, Name: "aaa.", Type: "NS", OldTTL: 300, NewTTL: 0, OldRData: "a.nic.aaa.", NewRData: "a.nic.aaa."},
+		{Kind: diff.ChangeRemoved, Name: "bbb.", Type: "NS", OldTTL: 0, OldRData: "a.nic.bbb."},
+	}
+	e := NewEntry(time.Date(2026, 7, 25, 6, 30, 0, 0, time.UTC), "old", "new", changes)
+
+	mod := e.Changes[0]
+	if mod.OldTTL == nil || *mod.OldTTL != 300 {
+		t.Errorf("modified OldTTL = %v, want 300", mod.OldTTL)
+	}
+	if mod.NewTTL == nil || *mod.NewTTL != 0 {
+		t.Errorf("modified NewTTL = %v, want 0", mod.NewTTL)
+	}
+
+	// TTL 0 が JSON 出力から消えないこと (omitempty で欠落しない)
+	data, err := json.Marshal(mod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"new_ttl":0`) {
+		t.Errorf("marshalled change = %s, want it to contain \"new_ttl\":0", data)
+	}
+
+	rem := e.Changes[1]
+	if rem.OldTTL == nil || *rem.OldTTL != 0 {
+		t.Errorf("removed OldTTL = %v, want 0", rem.OldTTL)
+	}
+	if rem.NewTTL != nil {
+		t.Errorf("removed NewTTL = %v, want nil", rem.NewTTL)
 	}
 }
 
