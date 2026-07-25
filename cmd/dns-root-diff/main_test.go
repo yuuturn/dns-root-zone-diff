@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/yfujii/dns-root-diff/internal/config"
 	"github.com/yfujii/dns-root-diff/internal/store"
@@ -167,5 +169,36 @@ func TestRunOnceRecordsHistory(t *testing.T) {
 	}
 	if e.Summary.Total != 2 {
 		t.Errorf("Summary.Total = %d, want 2 (SOA modified + NS added)", e.Summary.Total)
+	}
+}
+
+func TestRunLoopWebListenError(t *testing.T) {
+	// 先にポートを占有して web サーバーの listen を失敗させる
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	cfg := config.Config{
+		ZoneURL:       "http://127.0.0.1:0/unused",
+		DataDir:       t.TempDir(),
+		FetchInterval: time.Hour,
+		Web: config.WebConfig{
+			Enabled: true,
+			Listen:  ln.Addr().String(),
+		},
+	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- runLoop(cfg, "") }()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("runLoop() = nil, want listen error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runLoop() did not return on web listen failure")
 	}
 }

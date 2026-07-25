@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -48,15 +49,20 @@ func runLoop(cfg config.Config, configPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	webErr := make(chan error, 1)
 	if cfg.Web.Enabled {
 		srv := &http.Server{
-			Addr:    cfg.Web.Listen,
 			Handler: web.New(store.NewHistory(cfg.DataDir), web.StaticFS()).Handler(),
 		}
+		// ポート競合や不正なアドレスを起動時に即検出できるよう bind は同期で行う。
+		ln, err := net.Listen("tcp", cfg.Web.Listen)
+		if err != nil {
+			return fmt.Errorf("web server listen on %s: %w", cfg.Web.Listen, err)
+		}
+		fmt.Printf("web server listening on %s\n", cfg.Web.Listen)
 		go func() {
-			fmt.Printf("web server listening on %s\n", cfg.Web.Listen)
-			if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-				fmt.Fprintf(os.Stderr, "web server failed: %v\n", err)
+			if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+				webErr <- err
 			}
 		}()
 		defer func() {
@@ -87,6 +93,10 @@ func runLoop(cfg config.Config, configPath string) error {
 			if err := runOnce(ctx, cfg, configPath); err != nil {
 				fmt.Fprintf(os.Stderr, "run failed: %v\n", err)
 			}
+		case err := <-webErr:
+			// web.enabled な構成で Web UI だけ死んだ縮退状態のまま稼働を続けない。
+			// エラー終了して systemd (Restart=on-failure) に再起動させる。
+			return fmt.Errorf("web server failed: %w", err)
 		case <-ctx.Done():
 			fmt.Println("shutting down")
 			return nil
