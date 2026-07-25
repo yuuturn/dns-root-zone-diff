@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -149,8 +150,11 @@ func applyEnv(cfg *Config) {
 	if (cfg.Twitter.APIKey != "" && cfg.Twitter.AccessToken != "") || cfg.Twitter.OAuth2AccessToken != "" {
 		cfg.Twitter.Enabled = true
 	}
-	if v := os.Getenv("DNS_ROOT_DIFF_WEB_ENABLED"); v == "true" || v == "1" {
-		cfg.Web.Enabled = true
+	if v := os.Getenv("DNS_ROOT_DIFF_WEB_ENABLED"); v != "" {
+		// 有効化・無効化の両方向に上書きできるよう真偽値として解析する。
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Web.Enabled = b
+		}
 	}
 	if v := os.Getenv("DNS_ROOT_DIFF_WEB_LISTEN"); v != "" {
 		cfg.Web.Listen = v

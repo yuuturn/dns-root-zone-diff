@@ -208,3 +208,36 @@ func TestWebEnvOverride(t *testing.T) {
 		t.Errorf("Web.Listen = %q", cfg.Web.Listen)
 	}
 }
+
+func TestWebEnvDisable(t *testing.T) {
+	content := `
+web:
+  enabled: true
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DNS_ROOT_DIFF_WEB_ENABLED", "false")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Web.Enabled {
+		t.Error("Web.Enabled = true, want false from env override")
+	}
+}
+
+func TestWebEnvInvalidValueIgnored(t *testing.T) {
+	t.Setenv("DNS_ROOT_DIFF_WEB_ENABLED", "yes")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Web.Enabled {
+		t.Error("Web.Enabled = true, want false (invalid env value ignored)")
+	}
+}
