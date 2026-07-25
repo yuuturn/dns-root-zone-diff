@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,6 +16,7 @@ import (
 	"github.com/yfujii/dns-root-diff/internal/fetcher"
 	"github.com/yfujii/dns-root-diff/internal/notify"
 	"github.com/yfujii/dns-root-diff/internal/store"
+	"github.com/yfujii/dns-root-diff/internal/web"
 	"github.com/yfujii/dns-root-diff/internal/zone"
 )
 
@@ -44,6 +47,26 @@ func run() error {
 func runLoop(cfg config.Config, configPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	if cfg.Web.Enabled {
+		srv := &http.Server{
+			Addr:    cfg.Web.Listen,
+			Handler: web.New(store.NewHistory(cfg.DataDir), web.StaticFS()).Handler(),
+		}
+		go func() {
+			fmt.Printf("web server listening on %s\n", cfg.Web.Listen)
+			if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+				fmt.Fprintf(os.Stderr, "web server failed: %v\n", err)
+			}
+		}()
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := srv.Shutdown(shutdownCtx); err != nil {
+				fmt.Fprintf(os.Stderr, "web server shutdown failed: %v\n", err)
+			}
+		}()
+	}
 
 	ticker := time.NewTicker(cfg.FetchInterval)
 	defer ticker.Stop()
