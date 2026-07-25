@@ -161,3 +161,22 @@ func TestSOASerialMalformedRData(t *testing.T) {
 		t.Error("SOASerial() ok = true for malformed RData, want false")
 	}
 }
+
+func TestSerialFromRData(t *testing.T) {
+	tests := []struct {
+		rdata      string
+		wantSerial string
+		wantOK     bool
+	}{
+		{"a.root-servers.net. nstld.verisign-grs.com. 2026072500 1800 900 604800 86400", "2026072500", true},
+		{"a.root-servers.net. nstld.verisign-grs.com. 2026072500", "2026072500", true},
+		{"a.root-servers.net. nstld.verisign-grs.com.", "", false},
+		{"", "", false},
+	}
+	for _, tt := range tests {
+		serial, ok := SerialFromRData(tt.rdata)
+		if ok != tt.wantOK || serial != tt.wantSerial {
+			t.Errorf("SerialFromRData(%q) = (%q, %v), want (%q, %v)", tt.rdata, serial, ok, tt.wantSerial, tt.wantOK)
+		}
+	}
+}

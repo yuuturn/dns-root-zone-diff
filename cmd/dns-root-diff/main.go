@@ -110,19 +110,24 @@ func buildNotifiers(cfg config.Config, configPath string) []notify.Notifier {
 		notifiers = append(notifiers, notify.NewSlackNotifier(cfg.Slack.WebhookURL))
 	}
 	if cfg.Twitter.Enabled {
+		var tw *notify.TwitterNotifier
 		if cfg.Twitter.OAuth2AccessToken != "" {
 			persist := func(access, refresh string) error {
 				return config.SaveOAuth2Tokens(configPath, access, refresh)
 			}
-			notifiers = append(notifiers, notify.NewTwitterOAuth2Notifier(
+			tw = notify.NewTwitterOAuth2Notifier(
 				cfg.Twitter.OAuth2AccessToken,
 				cfg.Twitter.OAuth2RefreshToken,
 				cfg.Twitter.OAuth2ClientID,
 				cfg.Twitter.OAuth2ClientSecret,
 				persist,
-			))
+			)
 		} else if cfg.Twitter.APIKey != "" && cfg.Twitter.AccessToken != "" {
-			notifiers = append(notifiers, notify.NewTwitterNotifier(cfg.Twitter.APIKey, cfg.Twitter.APISecret, cfg.Twitter.AccessToken, cfg.Twitter.AccessSecret))
+			tw = notify.NewTwitterNotifier(cfg.Twitter.APIKey, cfg.Twitter.APISecret, cfg.Twitter.AccessToken, cfg.Twitter.AccessSecret)
+		}
+		if tw != nil {
+			tw.SetMaxPosts(cfg.Twitter.MaxPosts)
+			notifiers = append(notifiers, tw)
 		}
 	}
 	return notifiers
@@ -164,10 +169,17 @@ func runOnce(ctx context.Context, cfg config.Config, configPath string) error {
 		fmt.Println("no changes detected")
 	} else {
 		fmt.Printf("detected %d changes\n", len(changes))
-		notifiers := buildNotifiers(cfg, configPath)
-		for _, n := range notifiers {
-			if err := n.Notify(ctx, changes); err != nil {
-				fmt.Fprintf(os.Stderr, "notify %s failed: %v\n", n.Name(), err)
+		// root zone は12時間ごとに再署名され、その際 RRSIG/SOA/ZONEMD が機械的に入れ替わる。
+		// 実質的な変更を伴わない回は通知しない (Web UI には履歴として残す)。
+		if substantive := diff.Substantive(changes); len(substantive) == 0 {
+			fmt.Println("re-signing only; skipping notification")
+		} else {
+			fmt.Printf("%d substantive changes\n", len(substantive))
+			notifiers := buildNotifiers(cfg, configPath)
+			for _, n := range notifiers {
+				if err := n.Notify(ctx, changes); err != nil {
+					fmt.Fprintf(os.Stderr, "notify %s failed: %v\n", n.Name(), err)
+				}
 			}
 		}
 		// 初回実行 (前回スナップショットなし) は全レコードが added になるため履歴には残さない。

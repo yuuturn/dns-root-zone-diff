@@ -20,6 +20,15 @@ import (
 	"github.com/yfujii/dns-root-diff/internal/diff"
 )
 
+const (
+	// tweetMaxLen は 1ツイートの最大文字数。
+	tweetMaxLen = 280
+	// defaultMaxPosts は 1回の検知で投稿する最大ツイート数のデフォルト。
+	defaultMaxPosts = 4
+	// defaultPostDelay は連投時のツイート間隔 (レート制限対策)。
+	defaultPostDelay = 1 * time.Second
+)
+
 // TokenPersister saves refreshed OAuth 2.0 tokens.
 type TokenPersister func(accessToken, refreshToken string) error
 
@@ -37,10 +46,21 @@ type TwitterNotifier struct {
 	clientSecret string
 	persistToken TokenPersister
 
+	maxPosts  int           // 1回の検知で投稿する最大ツイート数
+	postDelay time.Duration // 連投時のツイート間隔
+
 	client   *http.Client
 	apiURL   string // テスト用にオーバーライド可能
 	tokenURL string // テスト用にオーバーライド可能
 	mu       sync.Mutex
+}
+
+// SetMaxPosts は 1回の検知で投稿する最大ツイート数を設定する。
+// n が 0 以下の場合はデフォルトのままにする。
+func (tw *TwitterNotifier) SetMaxPosts(n int) {
+	if n > 0 {
+		tw.maxPosts = n
+	}
 }
 
 // NewTwitterNotifier は OAuth 1.0a 用の TwitterNotifier を生成する。
@@ -50,6 +70,8 @@ func NewTwitterNotifier(apiKey, apiSecret, accessToken, accessSecret string) *Tw
 		apiSecret:    apiSecret,
 		accessToken:  accessToken,
 		accessSecret: accessSecret,
+		maxPosts:     defaultMaxPosts,
+		postDelay:    defaultPostDelay,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -67,6 +89,8 @@ func NewTwitterOAuth2Notifier(accessToken, refreshToken, clientID, clientSecret 
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		persistToken: persist,
+		maxPosts:     defaultMaxPosts,
+		postDelay:    defaultPostDelay,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -80,20 +104,27 @@ func (tw *TwitterNotifier) Name() string {
 }
 
 // Notify は X に変更内容をツイートする。
+// X の重み付き文字数で280文字に収まるパーツに分割し、番号を付けて順に連投する。
+// 実質的な変更がない (再署名のみの) 場合は何も投稿しない。
 func (tw *TwitterNotifier) Notify(ctx context.Context, changes []diff.Change) error {
-	msg := FormatMessage(changes)
-	if msg == "" {
-		return nil
-	}
+	posts := FormatPosts(changes, FormatOptions{
+		MaxLen:    tweetMaxLen,
+		MaxParts:  tw.maxPosts,
+		Numbering: true,
+		Weighted:  true,
+	})
 
-	// 280文字制限に対応
-	if len(msg) > 280 {
-		msg = msg[:277] + "..."
-	}
-
-	err := tw.postTweet(ctx, msg)
-	if err != nil {
-		return fmt.Errorf("post tweet: %w", err)
+	for i, msg := range posts {
+		if i > 0 && tw.postDelay > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(tw.postDelay):
+			}
+		}
+		if err := tw.postTweet(ctx, msg); err != nil {
+			return fmt.Errorf("post tweet %d/%d: %w", i+1, len(posts), err)
+		}
 	}
 	return nil
 }

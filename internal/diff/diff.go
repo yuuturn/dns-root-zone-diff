@@ -2,6 +2,7 @@ package diff
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/yfujii/dns-root-diff/internal/zone"
 )
@@ -33,8 +34,11 @@ type Category int
 
 const (
 	CategoryDelegation Category = iota // 移譲変更 (NS)
-	CategoryDNSSEC                     // DNSSEC 変更 (DS, DNSKEY, RRSIG)
+	CategoryDNSSEC                     // DNSSEC 変更 (DS, DNSKEY, NSEC(3), CDS 等)
+	CategoryGlue                       // ネームサーバーのアドレス変更 (A, AAAA)
 	CategoryOther                      // その他
+	CategorySignature                  // 再署名 (RRSIG)
+	CategoryZone                       // ゾーン管理 (SOA, ZONEMD)
 )
 
 func (c Category) String() string {
@@ -43,11 +47,32 @@ func (c Category) String() string {
 		return "delegation"
 	case CategoryDNSSEC:
 		return "DNSSEC"
+	case CategoryGlue:
+		return "glue"
 	case CategoryOther:
 		return "other"
+	case CategorySignature:
+		return "signature"
+	case CategoryZone:
+		return "zone"
 	default:
 		return "unknown"
 	}
+}
+
+// categoryOrder はカテゴリの表示順。
+var categoryOrder = []Category{
+	CategoryDelegation,
+	CategoryDNSSEC,
+	CategoryGlue,
+	CategoryZone,
+	CategorySignature,
+	CategoryOther,
+}
+
+// Categories は全カテゴリを表示順で返す。
+func Categories() []Category {
+	return append([]Category(nil), categoryOrder...)
 }
 
 // Change は1つの変更を表す。
@@ -205,8 +230,14 @@ func Categorize(c Change) Category {
 	switch c.Type {
 	case "NS":
 		return CategoryDelegation
-	case "DS", "DNSKEY", "RRSIG":
+	case "DS", "DNSKEY", "NSEC", "NSEC3", "NSEC3PARAM", "CDS", "CDNSKEY":
 		return CategoryDNSSEC
+	case "A", "AAAA":
+		return CategoryGlue
+	case "RRSIG":
+		return CategorySignature
+	case "SOA", "ZONEMD":
+		return CategoryZone
 	default:
 		return CategoryOther
 	}
@@ -220,4 +251,142 @@ func CategorizeChanges(changes []Change) map[Category][]Change {
 		grouped[cat] = append(grouped[cat], c)
 	}
 	return grouped
+}
+
+// CountByCategory はカテゴリごとの変更件数を返す。
+func CountByCategory(changes []Change) map[Category]int {
+	counts := make(map[Category]int)
+	for _, c := range changes {
+		counts[Categorize(c)]++
+	}
+	return counts
+}
+
+// mechanicalSpec は再署名のたびに RDATA の一部が更新される RR type の定義。
+// keyFields は再署名では変わらないフィールドで、RRset 内でレコードを識別する。
+// keyFields と TTL が一致する旧新のレコードは、定常的な更新として扱う。
+type mechanicalSpec struct {
+	fields    int
+	keyFields []int
+}
+
+var mechanicalSpecs = map[string]mechanicalSpec{
+	// RRSIG: TYPE-COVERED ALGORITHM LABELS ORIGINAL-TTL EXPIRATION INCEPTION KEY-TAG SIGNER SIGNATURE
+	// 再署名で expiration/inception/signature が入れ替わる。ZSK ロール時は key tag も
+	// 変わるが、鍵の交代自体は apex の DNSKEY 変更として通知される。
+	"RRSIG": {fields: 9, keyFields: []int{0, 1, 2, 3, 7}},
+	// SOA: MNAME RNAME SERIAL REFRESH RETRY EXPIRE MINIMUM
+	"SOA": {fields: 7, keyFields: []int{0, 1, 3, 4, 5, 6}},
+	// ZONEMD: SERIAL SCHEME HASH-ALGORITHM DIGEST
+	"ZONEMD": {fields: 4, keyFields: []int{1, 2}},
+}
+
+// recordKey は RRset 内のレコードを再署名をまたいで識別する鍵。
+type recordKey struct {
+	rrType string
+	name   string
+	ttl    uint32
+	fields string // keyFields の値を連結したもの
+}
+
+// keyOf は RDATA から recordKey を作る。フィールド数が定義と異なる場合は失敗する。
+func (s mechanicalSpec) keyOf(rrType, name, rdata string, ttl uint32) (recordKey, bool) {
+	fields := strings.Fields(rdata)
+	if len(fields) != s.fields {
+		return recordKey{}, false
+	}
+	parts := make([]string, 0, len(s.keyFields))
+	for _, i := range s.keyFields {
+		parts = append(parts, fields[i])
+	}
+	return recordKey{rrType: rrType, name: name, ttl: ttl, fields: strings.Join(parts, "\x00")}, true
+}
+
+// sameKey は旧新の RDATA が keyFields で一致するかを返す。
+func (s mechanicalSpec) sameKey(oldRData, newRData string) bool {
+	oldFields := strings.Fields(oldRData)
+	newFields := strings.Fields(newRData)
+	if len(oldFields) != s.fields || len(newFields) != s.fields {
+		return false
+	}
+	for _, i := range s.keyFields {
+		if oldFields[i] != newFields[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// MarkMechanical は各変更が再署名に伴う機械的な変更かを、changes と同じ長さの
+// スライスで返す。
+//
+// root zone は 12 時間ごとに再署名され、その際 RRSIG が全て入れ替わり、
+// SOA serial と ZONEMD の serial/digest も必ず更新される。これらは運用上の
+// 意味を持たないため通知の対象外とする。
+//
+// 判定は RR type ではなく旧新の対応付けで行う。RRset が複数レコードを持つ場合、
+// Diff は modified に畳めず removed+added に分解するため、mechanicalSpec の
+// keyFields と TTL で組を作り、組になったものだけを機械的変更とする。
+// 相手のいない追加・削除 (署名の欠落や digest algorithm のロールオーバー) や、
+// TTL・keyFields が変わった変更は実質的な変更として残す。
+func MarkMechanical(changes []Change) []bool {
+	mechanical := make([]bool, len(changes))
+
+	removed := make(map[recordKey][]int)
+	added := make(map[recordKey][]int)
+
+	for i, c := range changes {
+		spec, ok := mechanicalSpecs[c.Type]
+		if !ok {
+			continue
+		}
+		switch c.Kind {
+		case ChangeModified:
+			if c.OldTTL == c.NewTTL && spec.sameKey(c.OldRData, c.NewRData) {
+				mechanical[i] = true
+			}
+		case ChangeRemoved:
+			if k, ok := spec.keyOf(c.Type, c.Name, c.OldRData, c.OldTTL); ok {
+				removed[k] = append(removed[k], i)
+			}
+		case ChangeAdded:
+			if k, ok := spec.keyOf(c.Type, c.Name, c.NewRData, c.NewTTL); ok {
+				added[k] = append(added[k], i)
+			}
+		}
+	}
+
+	for k, rem := range removed {
+		add := added[k]
+		for j := 0; j < len(rem) && j < len(add); j++ {
+			mechanical[rem[j]] = true
+			mechanical[add[j]] = true
+		}
+	}
+
+	return mechanical
+}
+
+// Substantive は実質的な変更 (再署名に伴う機械的変更を除いたもの) のみを抽出する。
+func Substantive(changes []Change) []Change {
+	mechanical := MarkMechanical(changes)
+	var out []Change
+	for i, c := range changes {
+		if !mechanical[i] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// CountMechanical は機械的変更のうち、指定 RR type の件数を返す。
+func CountMechanical(changes []Change, rrType string) int {
+	mechanical := MarkMechanical(changes)
+	n := 0
+	for i, c := range changes {
+		if c.Type == rrType && mechanical[i] {
+			n++
+		}
+	}
+	return n
 }

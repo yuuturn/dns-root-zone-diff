@@ -9,6 +9,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// defaultTwitterMaxPosts は1回の検知で連投する最大ツイート数のデフォルト。
+const defaultTwitterMaxPosts = 4
+
 // Config はアプリケーション全体の設定。
 type Config struct {
 	ZoneURL       string        `yaml:"zone_url"`
@@ -41,6 +44,8 @@ type TwitterConfig struct {
 	OAuth2RefreshToken string `yaml:"oauth2_refresh_token"`
 	OAuth2ClientID     string `yaml:"oauth2_client_id"`
 	OAuth2ClientSecret string `yaml:"oauth2_client_secret"`
+	// MaxPosts は1回の検知で連投する最大ツイート数。
+	MaxPosts int `yaml:"max_posts"`
 }
 
 // Default はデフォルト設定を返す。
@@ -49,6 +54,9 @@ func Default() Config {
 		ZoneURL:       "https://www.internic.net/domain/root.zone",
 		FetchInterval: 2 * time.Hour,
 		DataDir:       "./data",
+		Twitter: TwitterConfig{
+			MaxPosts: defaultTwitterMaxPosts,
+		},
 		Web: WebConfig{
 			Enabled: false,
 			Listen:  "127.0.0.1:8080",
@@ -75,6 +83,10 @@ func Load(path string) (Config, error) {
 	// web セクションで listen が省略された場合はデフォルトに補正する。
 	if cfg.Web.Listen == "" {
 		cfg.Web.Listen = Default().Web.Listen
+	}
+	// max_posts の省略・不正値はデフォルトに補正する。
+	if cfg.Twitter.MaxPosts <= 0 {
+		cfg.Twitter.MaxPosts = defaultTwitterMaxPosts
 	}
 	return cfg, nil
 }
@@ -146,6 +158,11 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("TWITTER_OAUTH2_CLIENT_SECRET"); v != "" {
 		cfg.Twitter.OAuth2ClientSecret = v
+	}
+	if v := os.Getenv("TWITTER_MAX_POSTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Twitter.MaxPosts = n
+		}
 	}
 	if (cfg.Twitter.APIKey != "" && cfg.Twitter.AccessToken != "") || cfg.Twitter.OAuth2AccessToken != "" {
 		cfg.Twitter.Enabled = true

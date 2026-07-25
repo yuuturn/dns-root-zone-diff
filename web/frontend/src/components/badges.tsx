@@ -11,9 +11,15 @@ export function KindBadge({ kind }: { kind: Change["kind"] }) {
   return <Badge variant={kindVariant[kind] ?? "neutral"}>{kind}</Badge>;
 }
 
-const categoryVariant: Record<string, "purple" | "teal" | "neutral"> = {
+const categoryVariant: Record<
+  string,
+  "purple" | "teal" | "blue" | "orange" | "neutral"
+> = {
   delegation: "purple",
   DNSSEC: "teal",
+  glue: "blue",
+  signature: "orange",
+  zone: "neutral",
 };
 
 export function CategoryBadge({ category }: { category: string }) {

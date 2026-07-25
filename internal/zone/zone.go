@@ -61,13 +61,18 @@ func SOASerial(records []Record) (serial string, ok bool) {
 		if r.Type != "SOA" {
 			continue
 		}
-		fields := strings.Fields(r.RData)
-		if len(fields) < 3 {
-			return "", false
-		}
-		return fields[2], true
+		return SerialFromRData(r.RData)
 	}
 	return "", false
+}
+
+// SerialFromRData は SOA の RDATA (MNAME RNAME SERIAL ...) から serial を取り出す。
+func SerialFromRData(rdata string) (serial string, ok bool) {
+	fields := strings.Fields(rdata)
+	if len(fields) < 3 {
+		return "", false
+	}
+	return fields[2], true
 }
 
 func parseLine(line string, lastName string) (Record, error) {
