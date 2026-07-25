@@ -2,7 +2,7 @@
 
 DNS root zone file change notification ツール。
 
-https://www.internic.net/domain/root.zone から DNS root zone ファイルを 6時間に一度取得し、前回との差分を検出して、Slack または X (Twitter) に通知する。
+https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2時間に一度取得し、前回との差分を検出して、Slack または X (Twitter) に通知する。
 
 ## コミュニケーション
 
