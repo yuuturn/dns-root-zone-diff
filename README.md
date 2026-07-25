@@ -1,26 +1,33 @@
+![DNS Root Zone Diff](assets/logo@1024.png)
+
 # DNS Root Zone Diff
 
-DNS root zone の変更を機械的に検知して通知するツール。
+A tool that mechanically detects changes to the DNS root zone file and sends notifications.
 
-## 機能
+## Features
 
-- https://www.internic.net/domain/root.zone から 2時間に一度ゾーン取得
-- 前回との差分を検出
-- 変更をカテゴリ別に整理（delegation / DNSSEC / glue / signature / zone / other）
-- 再署名ノイズを除いた実質的な変更をサマリーにして Slack Webhook へ通知
-- 同じサマリーを X (Twitter) API v2 へ 280文字ごとに分割して連投
-- diff 履歴を Web UI で閲覧 (Cloudflare [kumo](https://github.com/cloudflare/kumo) 製)
+- Fetches the root zone from https://www.internic.net/domain/root.zone every 2 hours
+- Detects differences from the previous snapshot
+- Categorizes changes (delegation / DNSSEC / glue / signature / zone / other)
+- Summarizes substantive changes (excluding re-signing noise) and notifies via Slack Webhook
+- Posts the same summary to X (Twitter) API v2, split into chunks of 280 characters
+- Browses diff history through a Web UI (built with Cloudflare [kumo](https://github.com/cloudflare/kumo))
 
-## ローカルインストール
+## Live
+
+- X (Twitter): [@dnsrootzonediff](https://x.com/dnsrootzonediff) — live change notifications
+- Diff summary (Web UI): <https://dns-root-zone-diff.yfujii.net/>
+
+## Local Installation
 
 ```bash
 brew install go golangci-lint pre-commit gh
 pre-commit install
 ```
 
-## 設定
+## Configuration
 
-`config.yaml` を作成:
+Create a `config.yaml` file:
 
 ```yaml
 zone_url: "https://www.internic.net/domain/root.zone"
@@ -35,14 +42,14 @@ twitter:
   api_secret: ""
   access_token: ""
   access_secret: ""
-  # 1回の検知で連投する最大ツイート数 (省略時 4)
+  # Maximum number of tweets posted in a single detection (defaults to 4)
   max_posts: 4
 web:
   enabled: false
   listen: "127.0.0.1:8080"
 ```
 
-環境変数で上書き可能:
+Overridable via environment variables:
 
 - `DNS_ROOT_DIFF_ZONE_URL`
 - `DNS_ROOT_DIFF_INTERVAL`
@@ -56,50 +63,40 @@ web:
 - `DNS_ROOT_DIFF_WEB_ENABLED`
 - `DNS_ROOT_DIFF_WEB_LISTEN`
 
-## 変更のカテゴリと通知の内容
+## Change Categories and Notification Content
 
-検知した変更は RR type でカテゴリ分けする。
+Detected changes are categorized by RR type.
 
-| カテゴリ | 対象 RR type |
+| Category | RR types |
 | --- | --- |
 | `delegation` | NS |
 | `DNSSEC` | DS, DNSKEY, NSEC, NSEC3PARAM |
 | `glue` | A, AAAA |
 | `signature` | RRSIG |
 | `zone` | SOA, ZONEMD |
-| `other` | 上記以外 |
+| `other` | anything else |
 
-root zone は12時間ごとに再署名され、その際 RRSIG 約2,800レコードが入れ替わって
-SOA serial と ZONEMD の serial/digest も更新される。この**機械的な変更**
-(差分5,000件超になる) だけの回は **Slack / X へ通知しない**。Web UI には全件が
-履歴として残る。
+The root zone is re-signed every 12 hours, at which point about 2,800 RRSIG records are replaced and the SOA serial and ZONEMD serial/digest are also updated. Runs that consist **only** of this **mechanical change** (over 5,000 diffs) are **not notified to Slack/X**. The full history is retained in the Web UI.
 
-機械的な変更かどうかは RR type ではなく**旧新の対応付け**で判定する。RRset が複数
-レコードを持つ場合、差分は modified に畳まれず removed + added に分解されるため、
-再署名では変わらないフィールドと TTL でレコードの組を作り、組になったものだけを
-機械的な変更として扱う。
+Whether a change is mechanical is determined not by RR type but by **pairing old and new records**. Because an RRset with multiple records is decomposed into removed + added (not folded into a "modified" diff), re-signing pairs records by their unchanged fields and TTL, and only unpaired records are treated as mechanical changes.
 
-| RR type | 組を作るフィールド | 更新されてよいフィールド |
+| RR type | Fields used for pairing | Fields allowed to change |
 | --- | --- | --- |
 | RRSIG | type covered, algorithm, labels, original TTL, signer | expiration, inception, key tag, signature |
 | SOA | MNAME, RNAME, refresh, retry, expire, minimum | serial |
 | ZONEMD | scheme, hash algorithm | serial, digest |
 
-したがって以下は実質的な変更として通知する。
+Therefore the following are notified as substantive changes:
 
-- TTL の変更 (RRSIG / SOA / ZONEMD いずれも)
-- 組にならなかった追加・削除 (署名の欠落、digest algorithm のロールオーバーなど)
-- SOA の MNAME/RNAME/refresh/retry/expire/minimum の変更
-- ZONEMD の scheme/hash algorithm の変更
-- RRSIG の algorithm・signer の変更
+- TTL changes (RRSIG / SOA / ZONEMD, any of them)
+- Additions/removals that did not pair (missing signatures, digest algorithm rollover, etc.)
+- Changes to SOA MNAME/RNAME/refresh/retry/expire/minimum
+- Changes to ZONEMD scheme/hash algorithm
+- Changes to RRSIG algorithm/signer
 
-key tag は組を作るフィールドに含めない。ZSK ロールオーバーでは全 RRSIG の key tag が
-一斉に変わるが、鍵の交代自体は apex の DNSKEY 変更として通知されるため。
-逆に署名アルゴリズムのロールオーバーは全 RRSIG が組にならず大量の変更として通知される
-(数十年に一度の事象なので意図的にそのままにしている)。
+The key tag is not included in the pairing fields. A ZSK rollover changes the key tag of all RRSIGs at once, but the key change itself is already notified as an apex DNSKEY change. Conversely, a signature algorithm rollover leaves all RRSIGs unpaired and is notified as a large batch of changes (an event expected only once every few decades, so it is intentionally left as-is).
 
-実質的な変更があった回は次の形式で通知する。X は280文字ごと、Slack は3,500文字ごとに
-分割し、2通以上になる場合はタイトル行に `(1/3)` のような番号を付ける。
+When a run has substantive changes, it is notified in the following format. X splits at 280 characters and Slack at 3,500 characters; when more than one message is needed, a `(1/3)`-style number is added to the title line.
 
 ```
 DNS Root Zone changes (1/2)
@@ -114,54 +111,48 @@ re-signing: 2800 RRSIG (omitted)
   + newgtld. DS 12345 8 2 A1B2C3D4E5F60718293A4B5C6D7E8F...
 ```
 
-明細はレコード単位で載せる。上限 (`max_posts`) に収まらない場合は TLD ごとの集約
-(`  example. NS +1 -1`) に切り替え、それでも収まらない場合は末尾に
-`... +N more changes` として落とした件数を明記する。
+The breakdown is listed per record. When it does not fit within the limit (`max_posts`), it switches to per-TLD aggregation (`  example. NS +1 -1`), and if it still does not fit, the dropped count is shown explicitly at the end as `... +N more changes`.
 
-## 実行
+## Usage
 
 ```bash
-# 単発実行
+# Run once
 make build
 ./bin/dns-root-diff -config config.yaml -once
 
-# 定期実行
+# Run on a schedule
 ./bin/dns-root-diff -config config.yaml
 ```
 
 ## Web UI
 
-`web.enabled: true` にすると定期実行モード時に diff 履歴を閲覧できる Web サーバーが起動する
-(`-once` では起動しない)。履歴は変更検知のたびに `data_dir/diffs/` へ JSON として保存される。
+Setting `web.enabled: true` starts a web server that lets you browse diff history in scheduled mode (`-once` does not start it). History is saved as JSON to `data_dir/diffs/` on each detection.
 
-- `GET /` : 一覧・詳細画面 (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))
-- `GET /api/diffs?page=1&per_page=20` : diff 履歴一覧
-- `GET /api/diffs/{id}` : diff 詳細
-- `GET /api/health` : 死活監視
+- `GET /` : list and detail views (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))
+- `GET /api/diffs?page=1&per_page=20` : diff history list
+- `GET /api/diffs/{id}` : diff detail
+- `GET /api/health` : health check
 
-フロントエンドのビルド成果物は `internal/web/static/` にコミットされ、go:embed で
-バイナリに埋め込まれるため、通常のビルド・デプロイに Node.js は不要。
-フロントエンド (`web/frontend/`) を変更した場合は再ビルドして成果物ごとコミットする:
+The frontend build artifacts are committed under `internal/web/static/` and embedded into the binary via go:embed, so ordinary builds and deploys do not require Node.js. If you modify the frontend (`web/frontend/`), rebuild and commit the artifacts together:
 
 ```bash
-make frontend-install  # 初回のみ
-make frontend-build    # internal/web/static に出力される
+make frontend-install  # first time only
+make frontend-build    # outputs to internal/web/static
 ```
 
-インターネットへ公開する場合は nginx で TLS 終端するリバースプロキシを推奨。
-設定例と SELinux / firewalld の手順は [deploy/nginx.conf.example](deploy/nginx.conf.example) を参照。
+If you expose it to the internet, a reverse proxy with TLS termination via nginx is recommended. See [deploy/nginx.conf.example](deploy/nginx.conf.example) for an example configuration and SELinux / firewalld steps.
 
-## テスト
+## Testing
 
 ```bash
 make test
 make lint
 ```
 
-## VPS へのデプロイ
+## Deploying to a VPS
 
 ```bash
 make deploy
 ```
 
-VPS には事前に専用ユーザーとデータディレクトリを作成して config.yaml を配置する必要があります。
+Before deploying, create a dedicated user and data directory on the VPS, and place `config.yaml` there.
