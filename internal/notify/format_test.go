@@ -71,6 +71,15 @@ func TestFormatPostsReportsNonMechanicalZoneChanges(t *testing.T) {
 			want: "~ . SOA",
 		},
 		{
+			// serial 更新と TTL 変更が同時に起きた場合、機械的変更ではない理由
+			// (TTL が変わったこと) が明細から分かること。
+			name: "SOA serial and TTL change",
+			change: diff.Change{Kind: diff.ChangeModified, Name: ".", Type: "SOA", OldTTL: 86400, NewTTL: 172800,
+				OldRData: "a.root-servers.net. nstld.verisign-grs.com. 2026072501 1800 900 604800 86400",
+				NewRData: "a.root-servers.net. nstld.verisign-grs.com. 2026072502 1800 900 604800 86400"},
+			want: "(ttl 86400 -> 172800)",
+		},
+		{
 			name: "ZONEMD hash algorithm change",
 			change: diff.Change{Kind: diff.ChangeModified, Name: ".", Type: "ZONEMD", OldTTL: 86400, NewTTL: 86400,
 				OldRData: "2026072501 1 241 ABCDEF", NewRData: "2026072502 1 242 FEDCBA"},
@@ -137,11 +146,17 @@ func TestFormatPostsRecordLineFormats(t *testing.T) {
 		{Kind: diff.ChangeModified, Name: "moved.", Type: "NS", OldRData: "a.example.", NewRData: "b.example."},
 		{Kind: diff.ChangeModified, Name: "ttlonly.", Type: "NS", OldTTL: 86400, NewTTL: 172800, OldRData: "ns1.ttlonly.", NewRData: "ns1.ttlonly."},
 	}
+	changes = append(changes, diff.Change{
+		Kind: diff.ChangeModified, Name: "both.", Type: "NS", OldTTL: 86400, NewTTL: 172800,
+		OldRData: "a.both.", NewRData: "b.both.",
+	})
 	msg := strings.Join(FormatPosts(changes, tweetOpts()), "\n")
 	for _, want := range []string{
 		"- oldgtld. NS ns1.oldgtld.",
 		"~ moved. NS a.example. -> b.example.",
 		"~ ttlonly. NS ttl 86400 -> 172800",
+		// RDATA と TTL が同時に変わった場合は両方出す。
+		"~ both. NS a.both. -> b.both. (ttl 86400 -> 172800)",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("missing %q in:\n%s", want, msg)
@@ -396,11 +411,14 @@ func TestWeightedLen(t *testing.T) {
 		{"\U0001F600", 2}, // 絵文字 (BMP 外)
 		{"a\U0001F600あ", 1 + 2 + 2},
 		// 自動リンクされるドメイン/URL は t.co の固定長として数える。
-		{"ns1.newgtld.", urlWeight},
 		{"http://a.io", urlWeight},
-		{"newgtld. NS ns1.newgtld.", 8 + 1 + 2 + 1 + urlWeight},
+		{"example.net", urlWeight},
+		// FQDN の末尾ドットは URL の外なので別に1文字加算される。
+		{"a.co.", urlWeight + 1},
+		{"ns1.newgtld.", urlWeight + 1},
+		{"newgtld. NS ns1.newgtld.", 8 + 1 + 2 + 1 + urlWeight + 1},
 		// 23文字を超える場合は実際の長さ (過小評価しない方向に倒す)。
-		{"ns-tld1.charlestonroadregistry.com.", 35},
+		{"ns-tld1.charlestonroadregistry.com.", 34 + 1},
 		// TLD にならないラベルで終わるものはリンクされない。
 		{"192.0.2.1", 9},
 		{"newgtld.", 8},

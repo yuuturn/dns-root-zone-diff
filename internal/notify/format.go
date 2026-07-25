@@ -58,18 +58,28 @@ func weightedLen(s string) int {
 		if i > 0 {
 			n++ // トークン間の区切り
 		}
-		w := runeWeightedLen(token)
-		// t.co 短縮は短い URL も 23 文字として数えられる。
-		if w < urlWeight && isAutoLinked(token) {
-			w = urlWeight
-		}
-		n += w
+		n += tokenWeight(token)
 	}
 	// strings.Fields は連続する空白をまとめるため、区切り文字の差分を補正する。
 	if extra := countSpace(s) - separatorCount(s); extra > 0 {
 		n += extra
 	}
 	return n
+}
+
+// tokenWeight は1トークンの重み付き文字数を返す。
+// 自動リンクされる部分は t.co の固定長 (urlWeight) を下回らないものとして数え、
+// URL に含まれない末尾の句読点 ("example.net." の末尾ドットなど) は別に加算する。
+func tokenWeight(token string) int {
+	url, trailing, ok := splitURLToken(token)
+	if !ok {
+		return runeWeightedLen(token)
+	}
+	w := runeWeightedLen(url)
+	if w < urlWeight {
+		w = urlWeight
+	}
+	return w + runeWeightedLen(trailing)
 }
 
 // countSpace は空白文字の数を返す。
@@ -110,10 +120,23 @@ func runeWeightedLen(s string) int {
 var autoLinkedRe = regexp.MustCompile(
 	`^(?:[A-Za-z][A-Za-z0-9+.\-]*://)?[A-Za-z0-9][A-Za-z0-9\-]*(?:\.[A-Za-z0-9][A-Za-z0-9\-]*)*\.(?:xn--[A-Za-z0-9\-]+|[A-Za-z]{2,})(?:[:/?#][^\s]*)?$`)
 
-// isAutoLinked はトークンが X で自動リンクされる (= 23文字として数えられる) かを返す。
+// urlTrailingCutset は URL に含まれない末尾の句読点。
+const urlTrailingCutset = ".,;:)]}"
+
+// splitURLToken はトークンを、自動リンクされる URL 部分と URL 外の末尾文字に分ける。
+// 自動リンクされない場合は ok=false。
+func splitURLToken(token string) (url, trailing string, ok bool) {
+	url = strings.TrimRight(token, urlTrailingCutset)
+	if !autoLinkedRe.MatchString(url) {
+		return "", "", false
+	}
+	return url, token[len(url):], true
+}
+
+// isAutoLinked はトークンに X で自動リンクされる部分があるかを返す。
 func isAutoLinked(token string) bool {
-	// 末尾の区切り文字は URL に含まれない。
-	return autoLinkedRe.MatchString(strings.TrimRight(token, ".,;:)]}"))
+	_, _, ok := splitURLToken(token)
+	return ok
 }
 
 // isLightweightRune は twitter-text で重み1と定義された範囲かを返す。
@@ -262,12 +285,21 @@ func formatChange(c diff.Change) string {
 	case diff.ChangeRemoved:
 		return fmt.Sprintf("  - %s %s %s", c.Name, c.Type, truncate(c.OldRData, rdataMaxLen))
 	case diff.ChangeModified:
-		if c.OldRData == c.NewRData {
-			// RDATA が同じ modified は TTL 変更。
-			return fmt.Sprintf("  ~ %s %s ttl %d -> %d", c.Name, c.Type, c.OldTTL, c.NewTTL)
+		ttl := ""
+		if c.OldTTL != c.NewTTL {
+			ttl = fmt.Sprintf("ttl %d -> %d", c.OldTTL, c.NewTTL)
 		}
-		return fmt.Sprintf("  ~ %s %s %s -> %s", c.Name, c.Type,
+		if c.OldRData == c.NewRData {
+			// RDATA が同じ modified は TTL 変更のみ。
+			return fmt.Sprintf("  ~ %s %s %s", c.Name, c.Type, ttl)
+		}
+		line := fmt.Sprintf("  ~ %s %s %s -> %s", c.Name, c.Type,
 			truncate(c.OldRData, rdataMaxLen), truncate(c.NewRData, rdataMaxLen))
+		if ttl != "" {
+			// RDATA と TTL が同時に変わった場合は両方伝える。
+			line += " (" + ttl + ")"
+		}
+		return line
 	default:
 		return ""
 	}

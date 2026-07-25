@@ -34,7 +34,7 @@ type Category int
 
 const (
 	CategoryDelegation Category = iota // 移譲変更 (NS)
-	CategoryDNSSEC                     // DNSSEC 変更 (DS, DNSKEY, NSEC, NSEC3PARAM)
+	CategoryDNSSEC                     // DNSSEC 変更 (DS, DNSKEY, NSEC(3), CDS 等)
 	CategoryGlue                       // ネームサーバーのアドレス変更 (A, AAAA)
 	CategoryOther                      // その他
 	CategorySignature                  // 再署名 (RRSIG)
@@ -230,7 +230,7 @@ func Categorize(c Change) Category {
 	switch c.Type {
 	case "NS":
 		return CategoryDelegation
-	case "DS", "DNSKEY", "NSEC", "NSEC3PARAM":
+	case "DS", "DNSKEY", "NSEC", "NSEC3", "NSEC3PARAM", "CDS", "CDNSKEY":
 		return CategoryDNSSEC
 	case "A", "AAAA":
 		return CategoryGlue

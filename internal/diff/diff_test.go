@@ -181,6 +181,21 @@ func TestCategorize(t *testing.T) {
 			wantCat: CategoryDNSSEC,
 		},
 		{
+			name:    "NSEC3 modified is DNSSEC",
+			change:  Change{Kind: ChangeModified, Name: "example.", Type: "NSEC3"},
+			wantCat: CategoryDNSSEC,
+		},
+		{
+			name:    "NSEC3PARAM added is DNSSEC",
+			change:  Change{Kind: ChangeAdded, Name: ".", Type: "NSEC3PARAM", NewRData: "1 0 0 -"},
+			wantCat: CategoryDNSSEC,
+		},
+		{
+			name:    "CDS added is DNSSEC",
+			change:  Change{Kind: ChangeAdded, Name: "example.", Type: "CDS", NewRData: "12345 8 2 ABCDEF"},
+			wantCat: CategoryDNSSEC,
+		},
+		{
 			name:    "RRSIG modified is signature",
 			change:  Change{Kind: ChangeModified, Name: ".", Type: "RRSIG"},
 			wantCat: CategorySignature,
@@ -569,7 +584,7 @@ func TestCategoriesIsACopyAndCoversEveryCategory(t *testing.T) {
 		}
 		seen[cat] = true
 	}
-	for _, rrType := range []string{"NS", "DS", "DNSKEY", "NSEC", "NSEC3PARAM", "A", "AAAA", "RRSIG", "SOA", "ZONEMD", "TXT"} {
+	for _, rrType := range []string{"NS", "DS", "DNSKEY", "NSEC", "NSEC3", "NSEC3PARAM", "CDS", "CDNSKEY", "A", "AAAA", "RRSIG", "SOA", "ZONEMD", "TXT"} {
 		cat := Categorize(Change{Type: rrType})
 		if !seen[cat] {
 			t.Errorf("Categories() is missing %v (from %s)", cat, rrType)
