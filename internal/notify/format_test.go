@@ -11,7 +11,7 @@ import (
 
 // tweetOpts は X 相当のフォーマットオプション。
 func tweetOpts() FormatOptions {
-	return FormatOptions{MaxLen: 280, MaxParts: 4, Numbering: true}
+	return FormatOptions{MaxLen: 280, MaxParts: 4, Numbering: true, Weighted: true}
 }
 
 // resigningChanges は再署名のみの変更 (RRSIG 入れ替え + SOA serial bump) を作る。
@@ -284,12 +284,84 @@ func TestFormatPostsHandlesMultibyteRData(t *testing.T) {
 		t.Fatal("want at least 1 part")
 	}
 	for i, p := range parts {
-		if n := utf8.RuneCountInString(p); n > 280 {
-			t.Errorf("part %d is %d runes (> 280)", i+1, n)
+		if n := weightedLen(p); n > 280 {
+			t.Errorf("part %d is %d weighted chars (> 280):\n%s", i+1, n, p)
 		}
 		if !utf8.ValidString(p) {
 			t.Errorf("part %d is not valid UTF-8", i+1)
 		}
+	}
+}
+
+func TestFormatPostsWeightedSplitsEarlierThanRuneCount(t *testing.T) {
+	// 全角のみの明細。rune 数では 1パーツに収まるが、X の重み付きでは2文字分に
+	// なるため分割されなければならない。
+	var changes []diff.Change
+	for i := 0; i < 4; i++ {
+		changes = append(changes, diff.Change{
+			Kind: diff.ChangeAdded, Name: fmt.Sprintf("xn--example%02d.", i), Type: "TXT",
+			NewRData: strings.Repeat("あ", 30),
+		})
+	}
+
+	runeParts := FormatPosts(changes, FormatOptions{MaxLen: 280, MaxParts: 4, Numbering: true})
+	weightedParts := FormatPosts(changes, tweetOpts())
+
+	if len(weightedParts) <= len(runeParts) {
+		t.Errorf("weighted counting should split more: rune=%d parts, weighted=%d parts",
+			len(runeParts), len(weightedParts))
+	}
+	for i, p := range weightedParts {
+		if n := weightedLen(p); n > 280 {
+			t.Errorf("weighted part %d is %d weighted chars (> 280):\n%s", i+1, n, p)
+		}
+	}
+	// rune 数ベースだと X の上限を超えるパーツができることを確認する (退行検知)。
+	over := false
+	for _, p := range runeParts {
+		if weightedLen(p) > 280 {
+			over = true
+		}
+	}
+	if !over {
+		t.Skip("test data no longer exceeds the weighted limit under rune counting")
+	}
+}
+
+func TestWeightedLen(t *testing.T) {
+	tests := []struct {
+		in   string
+		want int
+	}{
+		{"", 0},
+		{"abc", 3},
+		{"newgtld. NS ns1.newgtld.", 24},
+		{"あ", 2},          // CJK は重み2
+		{"あい", 4},         // 全角2文字
+		{"‐", 1},          // ハイフン (重み1の範囲)
+		{"①", 2},          // ① (重み1の範囲外)
+		{"\U0001F600", 2}, // 絵文字 (BMP 外)
+		{"a\U0001F600あ", 1 + 2 + 2},
+	}
+	for _, tt := range tests {
+		if got := weightedLen(tt.in); got != tt.want {
+			t.Errorf("weightedLen(%q) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestFormatPostsUnweightedUsesRuneCount(t *testing.T) {
+	// Slack は rune 数で数える (X の重み付けは適用しない)。
+	long := strings.Repeat("あ", 1000) // 1000 rune / 2000 重み
+	changes := []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "xn--multibyte.", Type: "TXT", NewRData: long},
+	}
+	parts := FormatPosts(changes, FormatOptions{MaxLen: 3500, MaxParts: 3})
+	if len(parts) != 1 {
+		t.Fatalf("got %d parts, want 1 (3500 runes is enough)", len(parts))
+	}
+	if n := utf8.RuneCountInString(parts[0]); n > 3500 {
+		t.Errorf("part is %d runes (> 3500)", n)
 	}
 }
 

@@ -104,13 +104,14 @@ func (tw *TwitterNotifier) Name() string {
 }
 
 // Notify は X に変更内容をツイートする。
-// 280文字に収まるパーツに分割し、番号を付けて順に連投する。
+// X の重み付き文字数で280文字に収まるパーツに分割し、番号を付けて順に連投する。
 // 実質的な変更がない (再署名のみの) 場合は何も投稿しない。
 func (tw *TwitterNotifier) Notify(ctx context.Context, changes []diff.Change) error {
 	posts := FormatPosts(changes, FormatOptions{
 		MaxLen:    tweetMaxLen,
 		MaxParts:  tw.maxPosts,
 		Numbering: true,
+		Weighted:  true,
 	})
 
 	for i, msg := range posts {

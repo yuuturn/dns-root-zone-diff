@@ -165,11 +165,45 @@ func TestTwitterSplitsLongMessageIntoNumberedPosts(t *testing.T) {
 		t.Fatalf("got %d tweets, want <= %d", len(texts), defaultMaxPosts)
 	}
 	for i, text := range texts {
-		if got := utf8.RuneCountInString(text); got > 280 {
-			t.Errorf("tweet %d length = %d, want <= 280:\n%s", i+1, got, text)
+		if got := weightedLen(text); got > 280 {
+			t.Errorf("tweet %d weighted length = %d, want <= 280:\n%s", i+1, got, text)
 		}
 		if want := fmt.Sprintf("(%d/%d)", i+1, len(texts)); !strings.Contains(text, want) {
 			t.Errorf("tweet %d missing %q:\n%s", i+1, want, text)
+		}
+	}
+}
+
+func TestTwitterCountsMultibyteAsWeighted(t *testing.T) {
+	srv := newTweetCollector(t)
+	defer srv.Close()
+
+	n := NewTwitterNotifier("key", "secret", "token", "tokensecret")
+	n.apiURL = srv.URL
+	n.postDelay = 0
+
+	// 全角の RDATA。rune 数で数えると X の重み付き上限を超える。
+	var changes []diff.Change
+	for i := 0; i < 10; i++ {
+		changes = append(changes, diff.Change{
+			Kind: diff.ChangeAdded, Name: fmt.Sprintf("xn--example%02d.", i), Type: "TXT",
+			NewRData: strings.Repeat("あ", 30),
+		})
+	}
+	if err := n.Notify(context.Background(), changes); err != nil {
+		t.Fatalf("Notify() error = %v", err)
+	}
+
+	texts := srv.Texts()
+	if len(texts) == 0 {
+		t.Fatal("no tweets posted")
+	}
+	for i, text := range texts {
+		if got := weightedLen(text); got > 280 {
+			t.Errorf("tweet %d weighted length = %d, want <= 280:\n%s", i+1, got, text)
+		}
+		if !utf8.ValidString(text) {
+			t.Errorf("tweet %d is not valid UTF-8", i+1)
 		}
 	}
 }

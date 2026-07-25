@@ -22,9 +22,50 @@ const (
 
 // FormatOptions は投稿本文の生成オプション。
 type FormatOptions struct {
-	MaxLen    int  // 1パーツの最大文字数 (rune 数)
+	MaxLen    int  // 1パーツの最大文字数
 	MaxParts  int  // 最大パーツ数 (0 = 無制限)
 	Numbering bool // タイトル行に " (i/n)" を付ける (総パーツ数が 2 以上のときのみ)
+	// Weighted は X (twitter-text) の重み付き文字数で長さを数える。
+	// X は大半の非 ASCII 文字を2文字分として数えるため、X 向けには必須。
+	// false の場合は rune 数で数える。
+	Weighted bool
+}
+
+// measure は MaxLen と比較する長さの計算関数を返す。
+func (o FormatOptions) measure() func(string) int {
+	if o.Weighted {
+		return weightedLen
+	}
+	return utf8.RuneCountInString
+}
+
+// weightedLen は X (twitter-text) の重み付き文字数を返す。
+// twitter-text の既定設定では下記の範囲が重み1、それ以外は重み2。
+// 結合文字列 (絵文字の ZWJ シーケンスなど) や未正規化の文字列は X の計数より
+// 多めに数えるため、投稿が上限で拒否されることはない。
+func weightedLen(s string) int {
+	n := 0
+	for _, r := range s {
+		if isLightweightRune(r) {
+			n++
+		} else {
+			n += 2
+		}
+	}
+	return n
+}
+
+// isLightweightRune は twitter-text で重み1と定義された範囲かを返す。
+func isLightweightRune(r rune) bool {
+	switch {
+	case r <= 0x10FF,
+		r >= 0x2000 && r <= 0x200D,
+		r >= 0x2010 && r <= 0x201F,
+		r >= 0x2032 && r <= 0x2037:
+		return true
+	default:
+		return false
+	}
 }
 
 // detailLine は明細の1行と、その行が表す変更件数。
@@ -191,15 +232,16 @@ func formatTLDGroup(g diff.TLDGroup) string {
 // pack はブロック群を MaxLen 以内のパーツに詰める。
 // maxParts > 0 の場合はパーツ数をそこで打ち切り、落とした変更件数を返す。
 func pack(blocks []block, opts FormatOptions, maxParts int) (parts []string, dropped int) {
-	packed, dropped := packOnce(blocks, opts.MaxLen, maxParts)
+	measure := opts.measure()
+	packed, dropped := packOnce(blocks, opts.MaxLen, maxParts, measure)
 
 	numbered := opts.Numbering && len(packed) > 1
 	if numbered {
 		// 番号の分だけ上限が減るため詰め直す。桁数が予約幅を超えたら予約を広げる (通常1周で確定)。
 		reserve := numberingReserve
 		for i := 0; i < 3; i++ {
-			packed, dropped = packOnce(blocks, opts.MaxLen-reserve, maxParts)
-			need := utf8.RuneCountInString(fmt.Sprintf(" (%d/%d)", len(packed), len(packed)))
+			packed, dropped = packOnce(blocks, opts.MaxLen-reserve, maxParts, measure)
+			need := measure(fmt.Sprintf(" (%d/%d)", len(packed), len(packed)))
 			if need <= reserve {
 				break
 			}
@@ -218,17 +260,18 @@ func pack(blocks []block, opts FormatOptions, maxParts int) (parts []string, dro
 }
 
 // packOnce は行を limit 文字以内のパーツに貪欲に詰める。
-func packOnce(blocks []block, limit, maxParts int) ([][]string, int) {
+// 長さは measure で数える (X は重み付き文字数、それ以外は rune 数)。
+func packOnce(blocks []block, limit, maxParts int, measure func(string) int) ([][]string, int) {
 	var packed [][]string
 	cur := []string{postTitle}
-	curLen := utf8.RuneCountInString(postTitle)
+	curLen := measure(postTitle)
 	dropped := 0
 	full := false
 
 	flush := func() {
 		packed = append(packed, cur)
 		cur = []string{postTitle}
-		curLen = utf8.RuneCountInString(postTitle)
+		curLen = measure(postTitle)
 	}
 	// 最後に使えるパーツでは打ち切り行の分を予約する。
 	effLimit := func() int {
@@ -239,7 +282,7 @@ func packOnce(blocks []block, limit, maxParts int) ([][]string, int) {
 	}
 	add := func(text string) {
 		cur = append(cur, text)
-		curLen += 1 + utf8.RuneCountInString(text)
+		curLen += 1 + measure(text)
 	}
 
 	for _, b := range blocks {
@@ -250,9 +293,9 @@ func packOnce(blocks []block, limit, maxParts int) ([][]string, int) {
 				continue
 			}
 			need := func() int {
-				n := 1 + utf8.RuneCountInString(dl.text)
+				n := 1 + measure(dl.text)
 				if pendingHeading {
-					n += 1 + utf8.RuneCountInString(b.heading)
+					n += 1 + measure(b.heading)
 				}
 				return n
 			}
