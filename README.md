@@ -6,9 +6,9 @@ DNS root zone の変更を機械的に検知して通知するツール。
 
 - https://www.internic.net/domain/root.zone から 2時間に一度ゾーン取得
 - 前回との差分を検出
-- 変更をカテゴリ別に整理（delegation / DNSSEC / other）
-- Slack Webhook へ通知
-- X (Twitter) API v2 へ通知
+- 変更をカテゴリ別に整理（delegation / DNSSEC / glue / signature / zone / other）
+- 再署名ノイズを除いた実質的な変更をサマリーにして Slack Webhook へ通知
+- 同じサマリーを X (Twitter) API v2 へ 280文字ごとに分割して連投
 - diff 履歴を Web UI で閲覧 (Cloudflare [kumo](https://github.com/cloudflare/kumo) 製)
 
 ## ローカルインストール
@@ -35,6 +35,8 @@ twitter:
   api_secret: ""
   access_token: ""
   access_secret: ""
+  # 1回の検知で連投する最大ツイート数 (省略時 4)
+  max_posts: 4
 web:
   enabled: false
   listen: "127.0.0.1:8080"
@@ -50,8 +52,46 @@ web:
 - `TWITTER_API_SECRET`
 - `TWITTER_ACCESS_TOKEN`
 - `TWITTER_ACCESS_SECRET`
+- `TWITTER_MAX_POSTS`
 - `DNS_ROOT_DIFF_WEB_ENABLED`
 - `DNS_ROOT_DIFF_WEB_LISTEN`
+
+## 変更のカテゴリと通知の内容
+
+検知した変更は RR type でカテゴリ分けする。
+
+| カテゴリ | 対象 RR type | 実質的な変更か |
+| --- | --- | --- |
+| `delegation` | NS | ○ |
+| `DNSSEC` | DS, DNSKEY, NSEC, NSEC3PARAM | ○ |
+| `glue` | A, AAAA | ○ |
+| `other` | 上記以外 | ○ |
+| `signature` | RRSIG | × (再署名で毎回入れ替わる) |
+| `zone` | SOA, ZONEMD | × (再署名ごとに必ず変わる) |
+
+root zone は12時間ごとに再署名され、その際 RRSIG 約2,800件が入れ替わって SOA serial と
+ZONEMD ダイジェストも更新される。この機械的な変更だけの回 (差分5,000件超になる) は
+**Slack / X へ通知しない**。Web UI には全件が履歴として残る。
+
+実質的な変更があった回は次の形式で通知する。X は280文字ごと、Slack は3,500文字ごとに
+分割し、2通以上になる場合はタイトル行に `(1/3)` のような番号を付ける。
+
+```
+DNS Root Zone changes (1/2)
+serial 2026072501 -> 2026072502
+delegation 2 / DNSSEC 1 / glue 2
+re-signing: 2800 RRSIG (omitted)
+
+[delegation]
+  - gone. NS ns1.dns.nic.gone.
+  + newgtld. NS ns1.dns.nic.newgtld.
+[DNSSEC]
+  + newgtld. DS 12345 8 2 A1B2C3D4E5F60718293A4B5C6D7E8F...
+```
+
+明細はレコード単位で載せる。上限 (`max_posts`) に収まらない場合は TLD ごとの集約
+(`  example. NS +1 -1`) に切り替え、それでも収まらない場合は末尾に
+`... +N more changes` として落とした件数を明記する。
 
 ## 実行
 

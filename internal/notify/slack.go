@@ -11,6 +11,13 @@ import (
 	"github.com/yfujii/dns-root-diff/internal/diff"
 )
 
+const (
+	// slackMaxLen は Slack 1メッセージの最大文字数。X より緩いのでレコード単位の明細が収まりやすい。
+	slackMaxLen = 3500
+	// slackMaxParts は 1回の検知で送る最大メッセージ数。
+	slackMaxParts = 3
+)
+
 // SlackNotifier は Slack Webhook に通知する。
 type SlackNotifier struct {
 	webhookURL string
@@ -32,12 +39,22 @@ func (s *SlackNotifier) Name() string {
 }
 
 // Notify は Slack Webhook にメッセージを送信する。
+// 実質的な変更がない (再署名のみの) 場合は何も送信しない。
 func (s *SlackNotifier) Notify(ctx context.Context, changes []diff.Change) error {
-	msg := FormatMessage(changes)
-	if msg == "" {
-		return nil
+	msgs := FormatPosts(changes, FormatOptions{
+		MaxLen:    slackMaxLen,
+		MaxParts:  slackMaxParts,
+		Numbering: true,
+	})
+	for i, msg := range msgs {
+		if err := s.post(ctx, msg); err != nil {
+			return fmt.Errorf("slack message %d/%d: %w", i+1, len(msgs), err)
+		}
 	}
+	return nil
+}
 
+func (s *SlackNotifier) post(ctx context.Context, msg string) error {
 	payload := map[string]string{"text": msg}
 	body, err := json.Marshal(payload)
 	if err != nil {

@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -169,6 +173,126 @@ func TestRunOnceRecordsHistory(t *testing.T) {
 	}
 	if e.Summary.Total != 2 {
 		t.Errorf("Summary.Total = %d, want 2 (SOA modified + NS added)", e.Summary.Total)
+	}
+}
+
+// resigningZones は再署名だけが起きた2世代のゾーンを返す (RRSIG 入れ替え + SOA serial bump)。
+func resigningZones() (oldZone, newZone string) {
+	base := ".\t86400\tIN\tNS\ta.root-servers.net.\n" +
+		"bbb.\t172800\tIN\tNS\tns1.bbb.\n"
+	soa := func(serial string) string {
+		return ".\t86400\tIN\tSOA\ta.root-servers.net. nstld.verisign-grs.com. " + serial + " 1800 900 604800 86400\n"
+	}
+	rrsig := func(expiry string) string {
+		return "bbb.\t86400\tIN\tRRSIG\tDS 8 1 86400 " + expiry + " 20260724040000 57780 . AAAA\n"
+	}
+	return soa("2026072400") + base + rrsig("20260806050000"),
+		soa("2026072500") + base + rrsig("20260806170000")
+}
+
+func TestRunOnceSkipsNotifyForResigningOnly(t *testing.T) {
+	oldZone, newZone := resigningZones()
+
+	var mu sync.Mutex
+	var notified int
+	slack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		notified++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer slack.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(newZone))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	// 前回スナップショットを用意し、再署名だけが起きた1回分を実行する。
+	if err := store.New(dir).Save([]byte(oldZone)); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		ZoneURL:       srv.URL,
+		DataDir:       dir,
+		FetchInterval: 0,
+		Slack:         config.SlackConfig{Enabled: true, WebhookURL: slack.URL},
+	}
+
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatalf("runOnce() error = %v", err)
+	}
+
+	mu.Lock()
+	got := notified
+	mu.Unlock()
+	if got != 0 {
+		t.Errorf("notified %d times for re-signing only changes, want 0", got)
+	}
+
+	// 通知しない回も履歴には残す。
+	entries, err := store.NewHistory(dir).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("history entries = %d, want 1", len(entries))
+	}
+	if entries[0].Summary.ByCategory["signature"] == 0 {
+		t.Errorf("history should record the signature changes: %+v", entries[0].Summary)
+	}
+}
+
+func TestRunOnceNotifiesSubstantiveChanges(t *testing.T) {
+	oldZone, newZone := resigningZones()
+	// 再署名に加えて新規委譲がある回は通知する。
+	newZone += "ccc.\t172800\tIN\tNS\tns1.ccc.\n"
+
+	var mu sync.Mutex
+	var texts []string
+	slack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]string
+		_ = json.Unmarshal(body, &payload)
+		mu.Lock()
+		texts = append(texts, payload["text"])
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer slack.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(newZone))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	if err := store.New(dir).Save([]byte(oldZone)); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		ZoneURL:       srv.URL,
+		DataDir:       dir,
+		FetchInterval: 0,
+		Slack:         config.SlackConfig{Enabled: true, WebhookURL: slack.URL},
+	}
+
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatalf("runOnce() error = %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(texts) != 1 {
+		t.Fatalf("notified %d times, want 1", len(texts))
+	}
+	if !strings.Contains(texts[0], "+ ccc. NS ns1.ccc.") {
+		t.Errorf("notification should describe the new delegation:\n%s", texts[0])
+	}
+	// RRSIG は (Name, Type) が1レコードのみなので modified 1件に畳まれる。
+	if !strings.Contains(texts[0], "re-signing: 1 RRSIG (omitted)") {
+		t.Errorf("notification should summarize the re-signing noise:\n%s", texts[0])
 	}
 }
 

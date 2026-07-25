@@ -47,8 +47,8 @@ func TestNewEntry(t *testing.T) {
 	if e.Summary.ByCategory["DNSSEC"] != 1 {
 		t.Errorf("ByCategory[DNSSEC] = %d, want 1", e.Summary.ByCategory["DNSSEC"])
 	}
-	if e.Summary.ByCategory["other"] != 1 {
-		t.Errorf("ByCategory[other] = %d, want 1", e.Summary.ByCategory["other"])
+	if e.Summary.ByCategory["zone"] != 1 {
+		t.Errorf("ByCategory[zone] = %d, want 1", e.Summary.ByCategory["zone"])
 	}
 	if len(e.Changes) != 4 {
 		t.Fatalf("len(Changes) = %d, want 4", len(e.Changes))

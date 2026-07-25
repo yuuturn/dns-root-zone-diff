@@ -33,8 +33,11 @@ type Category int
 
 const (
 	CategoryDelegation Category = iota // 移譲変更 (NS)
-	CategoryDNSSEC                     // DNSSEC 変更 (DS, DNSKEY, RRSIG)
+	CategoryDNSSEC                     // DNSSEC 変更 (DS, DNSKEY, NSEC, NSEC3PARAM)
+	CategoryGlue                       // ネームサーバーのアドレス変更 (A, AAAA)
 	CategoryOther                      // その他
+	CategorySignature                  // 再署名 (RRSIG)
+	CategoryZone                       // ゾーン管理 (SOA, ZONEMD)
 )
 
 func (c Category) String() string {
@@ -43,11 +46,38 @@ func (c Category) String() string {
 		return "delegation"
 	case CategoryDNSSEC:
 		return "DNSSEC"
+	case CategoryGlue:
+		return "glue"
 	case CategoryOther:
 		return "other"
+	case CategorySignature:
+		return "signature"
+	case CategoryZone:
+		return "zone"
 	default:
 		return "unknown"
 	}
+}
+
+// IsSubstantive は実質的な変更のカテゴリかを返す。
+// root zone は 12 時間ごとに再署名され、その際 RRSIG (signature) が全て入れ替わり
+// SOA serial と ZONEMD ダイジェスト (zone) も必ず変わる。これらは機械的な変更で
+// 運用上の意味を持たないため、実質的な変更として扱わない。
+func (c Category) IsSubstantive() bool {
+	switch c {
+	case CategorySignature, CategoryZone:
+		return false
+	default:
+		return true
+	}
+}
+
+// substantiveOrder は実質的なカテゴリの表示順。
+var substantiveOrder = []Category{CategoryDelegation, CategoryDNSSEC, CategoryGlue, CategoryOther}
+
+// SubstantiveCategories は実質的な変更のカテゴリを表示順で返す。
+func SubstantiveCategories() []Category {
+	return append([]Category(nil), substantiveOrder...)
 }
 
 // Change は1つの変更を表す。
@@ -205,8 +235,14 @@ func Categorize(c Change) Category {
 	switch c.Type {
 	case "NS":
 		return CategoryDelegation
-	case "DS", "DNSKEY", "RRSIG":
+	case "DS", "DNSKEY", "NSEC", "NSEC3PARAM":
 		return CategoryDNSSEC
+	case "A", "AAAA":
+		return CategoryGlue
+	case "RRSIG":
+		return CategorySignature
+	case "SOA", "ZONEMD":
+		return CategoryZone
 	default:
 		return CategoryOther
 	}
@@ -220,4 +256,24 @@ func CategorizeChanges(changes []Change) map[Category][]Change {
 		grouped[cat] = append(grouped[cat], c)
 	}
 	return grouped
+}
+
+// CountByCategory はカテゴリごとの変更件数を返す。
+func CountByCategory(changes []Change) map[Category]int {
+	counts := make(map[Category]int)
+	for _, c := range changes {
+		counts[Categorize(c)]++
+	}
+	return counts
+}
+
+// Substantive は実質的な変更 (再署名に伴う機械的変更を除いたもの) のみを抽出する。
+func Substantive(changes []Change) []Change {
+	var out []Change
+	for _, c := range changes {
+		if Categorize(c).IsSubstantive() {
+			out = append(out, c)
+		}
+	}
+	return out
 }

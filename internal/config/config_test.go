@@ -193,6 +193,54 @@ web:
 	}
 }
 
+func TestTwitterMaxPosts(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    int
+	}{
+		{"default when omitted", "twitter:\n  enabled: true\n", defaultTwitterMaxPosts},
+		{"from file", "twitter:\n  enabled: true\n  max_posts: 6\n", 6},
+		{"zero is defaulted", "twitter:\n  enabled: true\n  max_posts: 0\n", defaultTwitterMaxPosts},
+		{"negative is defaulted", "twitter:\n  enabled: true\n  max_posts: -3\n", defaultTwitterMaxPosts},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tt.content), 0644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.Twitter.MaxPosts != tt.want {
+				t.Errorf("Twitter.MaxPosts = %d, want %d", cfg.Twitter.MaxPosts, tt.want)
+			}
+		})
+	}
+}
+
+func TestTwitterMaxPostsEnvOverride(t *testing.T) {
+	t.Setenv("TWITTER_MAX_POSTS", "7")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Twitter.MaxPosts != 7 {
+		t.Errorf("Twitter.MaxPosts = %d, want 7", cfg.Twitter.MaxPosts)
+	}
+
+	t.Setenv("TWITTER_MAX_POSTS", "not-a-number")
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Twitter.MaxPosts != defaultTwitterMaxPosts {
+		t.Errorf("invalid env value should be ignored, got %d", cfg.Twitter.MaxPosts)
+	}
+}
+
 func TestWebEnvOverride(t *testing.T) {
 	t.Setenv("DNS_ROOT_DIFF_WEB_ENABLED", "true")
 	t.Setenv("DNS_ROOT_DIFF_WEB_LISTEN", "127.0.0.1:3000")
