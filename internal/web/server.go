@@ -15,6 +15,9 @@ import (
 const (
 	defaultPerPage = 20
 	maxPerPage     = 100
+	// maxPage は page * perPage の整数オーバーフローを防ぐための上限。
+	// 実際のエントリ数 (年間数百件) に対して十分大きい。
+	maxPage = 1_000_000
 )
 
 // HistoryReader は Server が必要とする履歴の読み取り操作。
@@ -72,6 +75,9 @@ func (s *Server) handleListDiffs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := positiveIntParam(r, "page", 1)
+	if page > maxPage {
+		page = maxPage
+	}
 	perPage := positiveIntParam(r, "per_page", defaultPerPage)
 	if perPage > maxPerPage {
 		perPage = maxPerPage

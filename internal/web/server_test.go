@@ -35,6 +35,8 @@ func (m *mockHistory) Get(id string) (store.Entry, error) {
 	return store.Entry{}, fmt.Errorf("not found: %w", fs.ErrNotExist)
 }
 
+func u32ptr(v uint32) *uint32 { return &v }
+
 func testEntries(n int) []store.Entry {
 	entries := make([]store.Entry, 0, n)
 	for i := n; i >= 1; i-- {
@@ -46,7 +48,7 @@ func testEntries(n int) []store.Entry {
 			NewSerial:  "new",
 			Summary:    store.Summary{Total: 1, Added: 1, ByCategory: map[string]int{"delegation": 1}},
 			Changes: []store.ChangeJSON{
-				{Kind: "added", Category: "delegation", Name: "example.", Type: "NS", NewTTL: 172800, NewRData: "a.nic.example."},
+				{Kind: "added", Category: "delegation", Name: "example.", Type: "NS", NewTTL: u32ptr(172800), NewRData: "a.nic.example."},
 			},
 		})
 	}
@@ -140,6 +142,18 @@ func TestListDiffsPagination(t *testing.T) {
 	body = getJSON(t, srv.URL+"/api/diffs?page=-1&per_page=abc", http.StatusOK)
 	if body["page"].(float64) != 1 || body["per_page"].(float64) != 20 {
 		t.Errorf("invalid params: page=%v per_page=%v, want 1/20", body["page"], body["per_page"])
+	}
+
+	// 巨大な page 値でも整数オーバーフローで panic せず空リストを返す
+	for _, q := range []string{
+		"page=9223372036854775807",
+		"page=9223372036854775807&per_page=100",
+		"page=92233720368547758",
+	} {
+		body = getJSON(t, srv.URL+"/api/diffs?"+q, http.StatusOK)
+		if len(body["diffs"].([]any)) != 0 {
+			t.Errorf("huge page (%s) should return empty list", q)
+		}
 	}
 }
 
