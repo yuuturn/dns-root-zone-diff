@@ -40,3 +40,6 @@ config.yaml
 .idea/
 .vscode/
 *.swp
+
+# Frontend
+web/frontend/node_modules/

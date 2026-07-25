@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/yfujii/dns-root-diff/internal/config"
 	"github.com/yfujii/dns-root-diff/internal/store"
@@ -109,5 +111,94 @@ func TestRunOnceNoChanges(t *testing.T) {
 	}
 	if err := runOnce(context.Background(), cfg, ""); err != nil {
 		t.Fatalf("second runOnce() error = %v", err)
+	}
+}
+
+func TestRunOnceRecordsHistory(t *testing.T) {
+	oldZone := ".\t86400\tIN\tSOA\ta.root-servers.net. nstld.verisign-grs.com. 2026072400 1800 900 604800 86400\n" +
+		".\t86400\tIN\tNS\ta.root-servers.net.\n"
+	newZone := ".\t86400\tIN\tSOA\ta.root-servers.net. nstld.verisign-grs.com. 2026072500 1800 900 604800 86400\n" +
+		".\t86400\tIN\tNS\ta.root-servers.net.\n" +
+		"bbb.\t172800\tIN\tNS\tns1.bbb.\n"
+
+	var requestCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if requestCount == 1 {
+			_, _ = w.Write([]byte(oldZone))
+		} else {
+			_, _ = w.Write([]byte(newZone))
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	cfg := config.Config{
+		ZoneURL:       srv.URL,
+		DataDir:       dir,
+		FetchInterval: 0,
+	}
+
+	// 初回実行: 前回スナップショットがないため履歴は記録されない
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatalf("first runOnce() error = %v", err)
+	}
+	h := store.NewHistory(dir)
+	entries, err := h.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("history after initial run = %d entries, want 0", len(entries))
+	}
+
+	// 2回目: 変更が検知され履歴に記録される
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatalf("second runOnce() error = %v", err)
+	}
+	entries, err = h.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("history entries = %d, want 1", len(entries))
+	}
+	e := entries[0]
+	if e.OldSerial != "2026072400" || e.NewSerial != "2026072500" {
+		t.Errorf("OldSerial=%q NewSerial=%q", e.OldSerial, e.NewSerial)
+	}
+	if e.Summary.Total != 2 {
+		t.Errorf("Summary.Total = %d, want 2 (SOA modified + NS added)", e.Summary.Total)
+	}
+}
+
+func TestRunLoopWebListenError(t *testing.T) {
+	// 先にポートを占有して web サーバーの listen を失敗させる
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	cfg := config.Config{
+		ZoneURL:       "http://127.0.0.1:0/unused",
+		DataDir:       t.TempDir(),
+		FetchInterval: time.Hour,
+		Web: config.WebConfig{
+			Enabled: true,
+			Listen:  ln.Addr().String(),
+		},
+	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- runLoop(cfg, "") }()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("runLoop() = nil, want listen error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runLoop() did not return on web listen failure")
 	}
 }

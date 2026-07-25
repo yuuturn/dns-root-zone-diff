@@ -9,6 +9,7 @@ DNS root zone の変更を機械的に検知して通知するツール。
 - 変更をカテゴリ別に整理（delegation / DNSSEC / other）
 - Slack Webhook へ通知
 - X (Twitter) API v2 へ通知
+- diff 履歴を Web UI で閲覧 (Cloudflare [kumo](https://github.com/cloudflare/kumo) 製)
 
 ## ローカルインストール
 
@@ -34,6 +35,9 @@ twitter:
   api_secret: ""
   access_token: ""
   access_secret: ""
+web:
+  enabled: false
+  listen: "127.0.0.1:8080"
 ```
 
 環境変数で上書き可能:
@@ -46,6 +50,8 @@ twitter:
 - `TWITTER_API_SECRET`
 - `TWITTER_ACCESS_TOKEN`
 - `TWITTER_ACCESS_SECRET`
+- `DNS_ROOT_DIFF_WEB_ENABLED`
+- `DNS_ROOT_DIFF_WEB_LISTEN`
 
 ## 実行
 
@@ -57,6 +63,28 @@ make build
 # 定期実行
 ./bin/dns-root-diff -config config.yaml
 ```
+
+## Web UI
+
+`web.enabled: true` にすると定期実行モード時に diff 履歴を閲覧できる Web サーバーが起動する
+(`-once` では起動しない)。履歴は変更検知のたびに `data_dir/diffs/` へ JSON として保存される。
+
+- `GET /` : 一覧・詳細画面 (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))
+- `GET /api/diffs?page=1&per_page=20` : diff 履歴一覧
+- `GET /api/diffs/{id}` : diff 詳細
+- `GET /api/health` : 死活監視
+
+フロントエンドのビルド成果物は `internal/web/static/` にコミットされ、go:embed で
+バイナリに埋め込まれるため、通常のビルド・デプロイに Node.js は不要。
+フロントエンド (`web/frontend/`) を変更した場合は再ビルドして成果物ごとコミットする:
+
+```bash
+make frontend-install  # 初回のみ
+make frontend-build    # internal/web/static に出力される
+```
+
+インターネットへ公開する場合は nginx で TLS 終端するリバースプロキシを推奨。
+設定例と SELinux / firewalld の手順は [deploy/nginx.conf.example](deploy/nginx.conf.example) を参照。
 
 ## テスト
 

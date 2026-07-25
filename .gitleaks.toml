@@ -13,4 +13,8 @@ paths = [
   '''(^|/)data/''',
   '''(^|/)\.hermes/''',
   '''(^|/)HANDOFF\.md$''',
+  # フロントエンドのビルド成果物 (minified bundle) と lock ファイルは
+  # 高エントロピー文字列による誤検知が起きやすいため除外する
+  '''^internal/web/static/''',
+  '''^web/frontend/package-lock\.json$''',
 ]

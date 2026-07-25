@@ -126,3 +126,38 @@ func TestParseInvalidLine(t *testing.T) {
 		t.Fatal("Parse() expected error for invalid line")
 	}
 }
+
+func TestSOASerial(t *testing.T) {
+	records := []Record{
+		{Name: ".", TTL: 86400, Class: "IN", Type: "SOA", RData: "a.root-servers.net. nstld.verisign-grs.com. 2026072500 1800 900 604800 86400"},
+		{Name: ".", TTL: 518400, Class: "IN", Type: "NS", RData: "a.root-servers.net."},
+	}
+
+	serial, ok := SOASerial(records)
+	if !ok {
+		t.Fatal("SOASerial() ok = false, want true")
+	}
+	if serial != "2026072500" {
+		t.Errorf("SOASerial() = %q, want %q", serial, "2026072500")
+	}
+}
+
+func TestSOASerialNoSOA(t *testing.T) {
+	records := []Record{
+		{Name: ".", TTL: 518400, Class: "IN", Type: "NS", RData: "a.root-servers.net."},
+	}
+
+	if _, ok := SOASerial(records); ok {
+		t.Error("SOASerial() ok = true, want false")
+	}
+}
+
+func TestSOASerialMalformedRData(t *testing.T) {
+	records := []Record{
+		{Name: ".", TTL: 86400, Class: "IN", Type: "SOA", RData: "a.root-servers.net. nstld.verisign-grs.com."},
+	}
+
+	if _, ok := SOASerial(records); ok {
+		t.Error("SOASerial() ok = true for malformed RData, want false")
+	}
+}

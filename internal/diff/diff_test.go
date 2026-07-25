@@ -220,3 +220,37 @@ func TestCategorizeChanges(t *testing.T) {
 		t.Errorf("other changes = %d, want 1", len(grouped[CategoryOther]))
 	}
 }
+
+func TestSortChangesDeterministic(t *testing.T) {
+	shuffled := []Change{
+		{Kind: ChangeModified, Name: ".", Type: "SOA", OldRData: "serial 1", NewRData: "serial 2"},
+		{Kind: ChangeAdded, Name: "bbb.", Type: "NS", NewRData: "b.nic.bbb."},
+		{Kind: ChangeRemoved, Name: "aaa.", Type: "NS", OldRData: "a.nic.aaa."},
+		{Kind: ChangeAdded, Name: "aaa.", Type: "DS", NewRData: "12345 8 2 ABCDEF"},
+		{Kind: ChangeAdded, Name: "aaa.", Type: "NS", NewRData: "b.nic.aaa."},
+		{Kind: ChangeRemoved, Name: "aaa.", Type: "NS", OldRData: "c.nic.aaa."},
+	}
+	want := []Change{
+		{Kind: ChangeModified, Name: ".", Type: "SOA", OldRData: "serial 1", NewRData: "serial 2"},
+		{Kind: ChangeAdded, Name: "aaa.", Type: "DS", NewRData: "12345 8 2 ABCDEF"},
+		{Kind: ChangeAdded, Name: "aaa.", Type: "NS", NewRData: "b.nic.aaa."},
+		{Kind: ChangeRemoved, Name: "aaa.", Type: "NS", OldRData: "a.nic.aaa."},
+		{Kind: ChangeRemoved, Name: "aaa.", Type: "NS", OldRData: "c.nic.aaa."},
+		{Kind: ChangeAdded, Name: "bbb.", Type: "NS", NewRData: "b.nic.bbb."},
+	}
+
+	SortChanges(shuffled)
+	if len(shuffled) != len(want) {
+		t.Fatalf("len = %d, want %d", len(shuffled), len(want))
+	}
+	for i := range want {
+		if shuffled[i] != want[i] {
+			t.Errorf("changes[%d] = %+v, want %+v", i, shuffled[i], want[i])
+		}
+	}
+}
+
+func TestSortChangesEmpty(t *testing.T) {
+	SortChanges(nil)
+	SortChanges([]Change{})
+}

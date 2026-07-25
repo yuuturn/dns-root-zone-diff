@@ -19,6 +19,28 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/frontend/package-lock.json
+
+      - name: Frontend build
+        run: cd web/frontend && npm ci && npm run build
+
+      # コミット済みの internal/web/static が最新の frontend ソースと
+      # 一致していることを検証する (ビルド忘れの検出)。
+      # git diff は未追跡ファイルを検査しないため、新規生成された chunk の
+      # コミット忘れも検出できるよう git status で検査する。
+      - name: Frontend dist check
+        run: |
+          status=$(git status --porcelain internal/web/static)
+          if [ -n "$status" ]; then
+            echo "internal/web/static is out of date. Run 'make frontend-build' and commit the result:"
+            echo "$status"
+            exit 1
+          fi
+
       - uses: actions/setup-go@v5
         with:
           go-version: stable

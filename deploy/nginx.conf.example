@@ -1,0 +1,52 @@
+# dns-root-diff の Web UI を公開するための nginx リバースプロキシ設定例。
+# /etc/nginx/conf.d/dns-root-diff.conf に配置して server_name と証明書パスを
+# 環境に合わせて変更する。
+#
+# 前提: config.yaml で web を有効化しておく
+#   web:
+#     enabled: true
+#     listen: "127.0.0.1:8080"
+#
+# Rocky Linux (SELinux enforcing) では nginx から upstream への接続を許可する:
+#   sudo setsebool -P httpd_can_network_connect 1
+#   (リバースプロキシ用途に絞る場合は httpd_can_network_relay でも可)
+#
+# firewalld で HTTP/HTTPS を開放する (8080 はローカルバインドのため開放不要):
+#   sudo firewall-cmd --permanent --add-service=http --add-service=https
+#   sudo firewall-cmd --reload
+#
+# 設定反映:
+#   sudo nginx -t && sudo systemctl reload nginx
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name dns-root-diff.example.com;
+
+    # Let's Encrypt (certbot --webroot) を使う場合は ACME チャレンジを通す
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name dns-root-diff.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/dns-root-diff.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/dns-root-diff.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

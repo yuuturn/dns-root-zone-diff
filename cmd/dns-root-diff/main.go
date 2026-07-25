@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,6 +17,7 @@ import (
 	"github.com/yfujii/dns-root-diff/internal/fetcher"
 	"github.com/yfujii/dns-root-diff/internal/notify"
 	"github.com/yfujii/dns-root-diff/internal/store"
+	"github.com/yfujii/dns-root-diff/internal/web"
 	"github.com/yfujii/dns-root-diff/internal/zone"
 )
 
@@ -45,6 +49,31 @@ func runLoop(cfg config.Config, configPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	webErr := make(chan error, 1)
+	if cfg.Web.Enabled {
+		srv := &http.Server{
+			Handler: web.New(store.NewHistory(cfg.DataDir), web.StaticFS()).Handler(),
+		}
+		// ポート競合や不正なアドレスを起動時に即検出できるよう bind は同期で行う。
+		ln, err := net.Listen("tcp", cfg.Web.Listen)
+		if err != nil {
+			return fmt.Errorf("web server listen on %s: %w", cfg.Web.Listen, err)
+		}
+		fmt.Printf("web server listening on %s\n", cfg.Web.Listen)
+		go func() {
+			if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+				webErr <- err
+			}
+		}()
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := srv.Shutdown(shutdownCtx); err != nil {
+				fmt.Fprintf(os.Stderr, "web server shutdown failed: %v\n", err)
+			}
+		}()
+	}
+
 	ticker := time.NewTicker(cfg.FetchInterval)
 	defer ticker.Stop()
 
@@ -64,6 +93,10 @@ func runLoop(cfg config.Config, configPath string) error {
 			if err := runOnce(ctx, cfg, configPath); err != nil {
 				fmt.Fprintf(os.Stderr, "run failed: %v\n", err)
 			}
+		case err := <-webErr:
+			// web.enabled な構成で Web UI だけ死んだ縮退状態のまま稼働を続けない。
+			// エラー終了して systemd (Restart=on-failure) に再起動させる。
+			return fmt.Errorf("web server failed: %w", err)
 		case <-ctx.Done():
 			fmt.Println("shutting down")
 			return nil
@@ -111,9 +144,10 @@ func runOnce(ctx context.Context, cfg config.Config, configPath string) error {
 	fmt.Printf("parsed %d records\n", len(records))
 
 	s := store.New(cfg.DataDir)
+	hadPrevious := s.Exists()
 
 	var oldRecords []zone.Record
-	if s.Exists() {
+	if hadPrevious {
 		oldData, err := s.Load()
 		if err != nil {
 			return fmt.Errorf("load previous zone: %w", err)
@@ -125,6 +159,7 @@ func runOnce(ctx context.Context, cfg config.Config, configPath string) error {
 	}
 
 	changes := diff.Diff(oldRecords, records)
+	diff.SortChanges(changes)
 	if len(changes) == 0 {
 		fmt.Println("no changes detected")
 	} else {
@@ -133,6 +168,20 @@ func runOnce(ctx context.Context, cfg config.Config, configPath string) error {
 		for _, n := range notifiers {
 			if err := n.Notify(ctx, changes); err != nil {
 				fmt.Fprintf(os.Stderr, "notify %s failed: %v\n", n.Name(), err)
+			}
+		}
+		// 初回実行 (前回スナップショットなし) は全レコードが added になるため履歴には残さない。
+		if hadPrevious {
+			oldSerial, _ := zone.SOASerial(oldRecords)
+			newSerial, ok := zone.SOASerial(records)
+			if !ok {
+				// ID 生成にシリアルが必要なため、SOA が取れない場合のフォールバック。
+				newSerial = "unknown"
+			}
+			h := store.NewHistory(cfg.DataDir)
+			entry := store.NewEntry(time.Now().UTC(), oldSerial, newSerial, changes)
+			if err := h.Append(entry); err != nil {
+				fmt.Fprintf(os.Stderr, "record history failed: %v\n", err)
 			}
 		}
 	}

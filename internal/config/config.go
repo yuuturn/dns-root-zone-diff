@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -15,6 +16,13 @@ type Config struct {
 	DataDir       string        `yaml:"data_dir"`
 	Slack         SlackConfig   `yaml:"slack"`
 	Twitter       TwitterConfig `yaml:"twitter"`
+	Web           WebConfig     `yaml:"web"`
+}
+
+// WebConfig は diff 閲覧用 Web サーバーの設定。
+type WebConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Listen  string `yaml:"listen"`
 }
 
 type SlackConfig struct {
@@ -41,6 +49,10 @@ func Default() Config {
 		ZoneURL:       "https://www.internic.net/domain/root.zone",
 		FetchInterval: 2 * time.Hour,
 		DataDir:       "./data",
+		Web: WebConfig{
+			Enabled: false,
+			Listen:  "127.0.0.1:8080",
+		},
 	}
 }
 
@@ -60,6 +72,10 @@ func Load(path string) (Config, error) {
 	}
 
 	applyEnv(&cfg)
+	// web セクションで listen が省略された場合はデフォルトに補正する。
+	if cfg.Web.Listen == "" {
+		cfg.Web.Listen = Default().Web.Listen
+	}
 	return cfg, nil
 }
 
@@ -133,5 +149,14 @@ func applyEnv(cfg *Config) {
 	}
 	if (cfg.Twitter.APIKey != "" && cfg.Twitter.AccessToken != "") || cfg.Twitter.OAuth2AccessToken != "" {
 		cfg.Twitter.Enabled = true
+	}
+	if v := os.Getenv("DNS_ROOT_DIFF_WEB_ENABLED"); v != "" {
+		// 有効化・無効化の両方向に上書きできるよう真偽値として解析する。
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Web.Enabled = b
+		}
+	}
+	if v := os.Getenv("DNS_ROOT_DIFF_WEB_LISTEN"); v != "" {
+		cfg.Web.Listen = v
 	}
 }
