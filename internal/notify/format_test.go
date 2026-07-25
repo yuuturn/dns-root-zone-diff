@@ -57,6 +57,50 @@ func TestFormatPostsZoneOnlyReturnsNil(t *testing.T) {
 	}
 }
 
+func TestFormatPostsReportsNonMechanicalZoneChanges(t *testing.T) {
+	tests := []struct {
+		name   string
+		change diff.Change
+		want   string
+	}{
+		{
+			name: "SOA MNAME change",
+			change: diff.Change{Kind: diff.ChangeModified, Name: ".", Type: "SOA", OldTTL: 86400, NewTTL: 86400,
+				OldRData: "a.root-servers.net. nstld.verisign-grs.com. 2026072501 1800 900 604800 86400",
+				NewRData: "b.root-servers.net. nstld.verisign-grs.com. 2026072502 1800 900 604800 86400"},
+			want: "~ . SOA",
+		},
+		{
+			name: "ZONEMD hash algorithm change",
+			change: diff.Change{Kind: diff.ChangeModified, Name: ".", Type: "ZONEMD", OldTTL: 86400, NewTTL: 86400,
+				OldRData: "2026072501 1 241 ABCDEF", NewRData: "2026072502 1 242 FEDCBA"},
+			want: "~ . ZONEMD",
+		},
+		{
+			name:   "ZONEMD removed",
+			change: diff.Change{Kind: diff.ChangeRemoved, Name: ".", Type: "ZONEMD", OldTTL: 86400, OldRData: "2026072501 1 241 ABCDEF"},
+			want:   "- . ZONEMD",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// 再署名ノイズに埋もれさせても通知されること。
+			changes := append(resigningChanges(1400), tt.change)
+			parts := FormatPosts(changes, tweetOpts())
+			if len(parts) == 0 {
+				t.Fatal("FormatPosts() = nil, want the zone change reported")
+			}
+			joined := strings.Join(parts, "\n")
+			if !strings.Contains(joined, "[zone]") {
+				t.Errorf("missing [zone] heading in:\n%s", joined)
+			}
+			if !strings.Contains(joined, tt.want) {
+				t.Errorf("missing %q in:\n%s", tt.want, joined)
+			}
+		})
+	}
+}
+
 func TestFormatPostsSinglePartOverview(t *testing.T) {
 	changes := append(resigningChanges(3),
 		diff.Change{Kind: diff.ChangeAdded, Name: "newgtld.", Type: "NS", NewRData: "ns1.newgtld."},

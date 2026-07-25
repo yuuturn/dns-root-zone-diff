@@ -244,22 +244,116 @@ func TestCategorizeChanges(t *testing.T) {
 	}
 }
 
-func TestIsSubstantive(t *testing.T) {
+func TestIsMechanical(t *testing.T) {
+	const (
+		soaOld = "a.root-servers.net. nstld.verisign-grs.com. 2026072500 1800 900 604800 86400"
+		zmdOld = "2026072500 1 241 ABCDEF"
+	)
 	tests := []struct {
-		cat  Category
-		want bool
+		name   string
+		change Change
+		want   bool
 	}{
-		{CategoryDelegation, true},
-		{CategoryDNSSEC, true},
-		{CategoryGlue, true},
-		{CategoryOther, true},
-		{CategorySignature, false},
-		{CategoryZone, false},
+		{
+			name:   "RRSIG replacement is mechanical",
+			change: Change{Kind: ChangeRemoved, Name: "example.", Type: "RRSIG", OldRData: "DS 8 1 86400 ... old"},
+			want:   true,
+		},
+		{
+			name: "SOA serial bump is mechanical",
+			change: Change{Kind: ChangeModified, Name: ".", Type: "SOA", OldTTL: 86400, NewTTL: 86400,
+				OldRData: soaOld,
+				NewRData: "a.root-servers.net. nstld.verisign-grs.com. 2026072501 1800 900 604800 86400"},
+			want: true,
+		},
+		{
+			name: "SOA MNAME change is not mechanical",
+			change: Change{Kind: ChangeModified, Name: ".", Type: "SOA", OldTTL: 86400, NewTTL: 86400,
+				OldRData: soaOld,
+				NewRData: "b.root-servers.net. nstld.verisign-grs.com. 2026072501 1800 900 604800 86400"},
+			want: false,
+		},
+		{
+			name: "SOA refresh change is not mechanical",
+			change: Change{Kind: ChangeModified, Name: ".", Type: "SOA", OldTTL: 86400, NewTTL: 86400,
+				OldRData: soaOld,
+				NewRData: "a.root-servers.net. nstld.verisign-grs.com. 2026072501 3600 900 604800 86400"},
+			want: false,
+		},
+		{
+			name: "SOA minimum change is not mechanical",
+			change: Change{Kind: ChangeModified, Name: ".", Type: "SOA", OldTTL: 86400, NewTTL: 86400,
+				OldRData: soaOld,
+				NewRData: "a.root-servers.net. nstld.verisign-grs.com. 2026072501 1800 900 604800 3600"},
+			want: false,
+		},
+		{
+			name: "SOA TTL change is not mechanical",
+			change: Change{Kind: ChangeModified, Name: ".", Type: "SOA", OldTTL: 86400, NewTTL: 172800,
+				OldRData: soaOld, NewRData: soaOld},
+			want: false,
+		},
+		{
+			name:   "SOA added is not mechanical",
+			change: Change{Kind: ChangeAdded, Name: ".", Type: "SOA", NewRData: soaOld},
+			want:   false,
+		},
+		{
+			name: "SOA with malformed RDATA is not mechanical",
+			change: Change{Kind: ChangeModified, Name: ".", Type: "SOA",
+				OldRData: "a. b. 2026072500", NewRData: "a. b. 2026072501"},
+			want: false,
+		},
+		{
+			name: "ZONEMD serial and digest update is mechanical",
+			change: Change{Kind: ChangeModified, Name: ".", Type: "ZONEMD", OldTTL: 86400, NewTTL: 86400,
+				OldRData: zmdOld, NewRData: "2026072501 1 241 FEDCBA"},
+			want: true,
+		},
+		{
+			name: "ZONEMD hash algorithm change is not mechanical",
+			change: Change{Kind: ChangeModified, Name: ".", Type: "ZONEMD", OldTTL: 86400, NewTTL: 86400,
+				OldRData: zmdOld, NewRData: "2026072501 1 242 FEDCBA"},
+			want: false,
+		},
+		{
+			name: "ZONEMD scheme change is not mechanical",
+			change: Change{Kind: ChangeModified, Name: ".", Type: "ZONEMD", OldTTL: 86400, NewTTL: 86400,
+				OldRData: zmdOld, NewRData: "2026072501 2 241 FEDCBA"},
+			want: false,
+		},
+		{
+			name:   "ZONEMD removed is not mechanical",
+			change: Change{Kind: ChangeRemoved, Name: ".", Type: "ZONEMD", OldRData: zmdOld},
+			want:   false,
+		},
+		{
+			name:   "NS change is not mechanical",
+			change: Change{Kind: ChangeAdded, Name: "newgtld.", Type: "NS", NewRData: "ns1.newgtld."},
+			want:   false,
+		},
 	}
 	for _, tt := range tests {
-		if got := tt.cat.IsSubstantive(); got != tt.want {
-			t.Errorf("%v.IsSubstantive() = %v, want %v", tt.cat, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsMechanical(tt.change); got != tt.want {
+				t.Errorf("IsMechanical() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCountMechanical(t *testing.T) {
+	changes := []Change{
+		{Kind: ChangeRemoved, Name: "a.", Type: "RRSIG", OldRData: "DS 8 1 ... old"},
+		{Kind: ChangeAdded, Name: "a.", Type: "RRSIG", NewRData: "DS 8 1 ... new"},
+		{Kind: ChangeModified, Name: ".", Type: "SOA", OldRData: "a. b. 1 1 1 1 1", NewRData: "a. b. 2 1 1 1 1"},
+		{Kind: ChangeAdded, Name: "b.", Type: "NS", NewRData: "ns1.b."},
+	}
+	if got := CountMechanical(changes, "RRSIG"); got != 2 {
+		t.Errorf("CountMechanical(RRSIG) = %d, want 2", got)
+	}
+	if got := CountMechanical(changes, "NS"); got != 0 {
+		t.Errorf("CountMechanical(NS) = %d, want 0", got)
 	}
 }
 
@@ -310,18 +404,28 @@ func TestCountByCategory(t *testing.T) {
 	}
 }
 
-func TestSubstantiveCategoriesIsACopy(t *testing.T) {
-	cats := SubstantiveCategories()
+func TestCategoriesIsACopyAndCoversEveryCategory(t *testing.T) {
+	cats := Categories()
 	if len(cats) == 0 {
-		t.Fatal("SubstantiveCategories() is empty")
+		t.Fatal("Categories() is empty")
 	}
-	cats[0] = CategorySignature
-	if again := SubstantiveCategories(); again[0] == CategorySignature {
-		t.Error("SubstantiveCategories() returned a slice sharing the package state")
+	cats[0] = CategoryOther
+	if again := Categories(); again[0] == CategoryOther {
+		t.Error("Categories() returned a slice sharing the package state")
 	}
-	for _, cat := range SubstantiveCategories() {
-		if !cat.IsSubstantive() {
-			t.Errorf("SubstantiveCategories() contains non-substantive %v", cat)
+
+	// Categorize が返しうる全カテゴリが表示順に含まれていること。
+	seen := make(map[Category]bool)
+	for _, cat := range Categories() {
+		if seen[cat] {
+			t.Errorf("Categories() contains %v twice", cat)
+		}
+		seen[cat] = true
+	}
+	for _, rrType := range []string{"NS", "DS", "DNSKEY", "NSEC", "NSEC3PARAM", "A", "AAAA", "RRSIG", "SOA", "ZONEMD", "TXT"} {
+		cat := Categorize(Change{Type: rrType})
+		if !seen[cat] {
+			t.Errorf("Categories() is missing %v (from %s)", cat, rrType)
 		}
 	}
 }

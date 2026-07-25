@@ -2,6 +2,7 @@ package diff
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/yfujii/dns-root-diff/internal/zone"
 )
@@ -59,25 +60,19 @@ func (c Category) String() string {
 	}
 }
 
-// IsSubstantive は実質的な変更のカテゴリかを返す。
-// root zone は 12 時間ごとに再署名され、その際 RRSIG (signature) が全て入れ替わり
-// SOA serial と ZONEMD ダイジェスト (zone) も必ず変わる。これらは機械的な変更で
-// 運用上の意味を持たないため、実質的な変更として扱わない。
-func (c Category) IsSubstantive() bool {
-	switch c {
-	case CategorySignature, CategoryZone:
-		return false
-	default:
-		return true
-	}
+// categoryOrder はカテゴリの表示順。
+var categoryOrder = []Category{
+	CategoryDelegation,
+	CategoryDNSSEC,
+	CategoryGlue,
+	CategoryZone,
+	CategorySignature,
+	CategoryOther,
 }
 
-// substantiveOrder は実質的なカテゴリの表示順。
-var substantiveOrder = []Category{CategoryDelegation, CategoryDNSSEC, CategoryGlue, CategoryOther}
-
-// SubstantiveCategories は実質的な変更のカテゴリを表示順で返す。
-func SubstantiveCategories() []Category {
-	return append([]Category(nil), substantiveOrder...)
+// Categories は全カテゴリを表示順で返す。
+func Categories() []Category {
+	return append([]Category(nil), categoryOrder...)
 }
 
 // Change は1つの変更を表す。
@@ -267,13 +262,73 @@ func CountByCategory(changes []Change) map[Category]int {
 	return counts
 }
 
+// IsMechanical は再署名に伴う機械的な変更かを返す。
+// root zone は 12 時間ごとに再署名され、その際 RRSIG が全て入れ替わり、
+// SOA serial と ZONEMD の serial/digest も必ず更新される。これらは運用上の
+// 意味を持たないため通知の対象外とする。
+//
+// 同じ RR type でも、SOA の MNAME/RNAME/refresh/retry/expire/minimum や
+// ZONEMD の scheme/hash algorithm の変更、TTL の変更、レコードの追加・削除は
+// 機械的な変更ではないため false を返す。
+func IsMechanical(c Change) bool {
+	switch c.Type {
+	case "RRSIG":
+		return true
+	case "SOA":
+		// SOA RDATA: MNAME RNAME SERIAL REFRESH RETRY EXPIRE MINIMUM
+		return isRDataUpdateOnly(c, 7, 2)
+	case "ZONEMD":
+		// ZONEMD RDATA: SERIAL SCHEME HASH-ALGORITHM DIGEST
+		return isRDataUpdateOnly(c, 4, 0, 3)
+	default:
+		return false
+	}
+}
+
+// isRDataUpdateOnly は TTL が変わらない modified で、RDATA の差分が
+// updatable のフィールドだけに収まっているかを返す。
+func isRDataUpdateOnly(c Change, wantFields int, updatable ...int) bool {
+	if c.Kind != ChangeModified || c.OldTTL != c.NewTTL {
+		return false
+	}
+	oldFields := strings.Fields(c.OldRData)
+	newFields := strings.Fields(c.NewRData)
+	if len(oldFields) != wantFields || len(newFields) != wantFields {
+		return false
+	}
+	skip := make(map[int]bool, len(updatable))
+	for _, i := range updatable {
+		skip[i] = true
+	}
+	for i := range oldFields {
+		if skip[i] {
+			continue
+		}
+		if oldFields[i] != newFields[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // Substantive は実質的な変更 (再署名に伴う機械的変更を除いたもの) のみを抽出する。
 func Substantive(changes []Change) []Change {
 	var out []Change
 	for _, c := range changes {
-		if Categorize(c).IsSubstantive() {
+		if !IsMechanical(c) {
 			out = append(out, c)
 		}
 	}
 	return out
+}
+
+// CountMechanical は機械的変更のうち、指定 RR type の件数を返す。
+func CountMechanical(changes []Change, rrType string) int {
+	n := 0
+	for _, c := range changes {
+		if c.Type == rrType && IsMechanical(c) {
+			n++
+		}
+	}
+	return n
 }

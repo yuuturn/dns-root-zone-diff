@@ -78,14 +78,15 @@ func overviewBlock(all, sub []diff.Change) block {
 
 	counts := diff.CountByCategory(sub)
 	var catParts []string
-	for _, cat := range diff.SubstantiveCategories() {
+	for _, cat := range diff.Categories() {
 		if n := counts[cat]; n > 0 {
 			catParts = append(catParts, fmt.Sprintf("%s %d", cat, n))
 		}
 	}
 	lines = append(lines, detailLine{text: strings.Join(catParts, " / ")})
 
-	if n := diff.CountByCategory(all)[diff.CategorySignature]; n > 0 {
+	// 通知から省いた再署名ノイズの規模だけは伝える。
+	if n := diff.CountMechanical(all, "RRSIG"); n > 0 {
 		lines = append(lines, detailLine{text: fmt.Sprintf("re-signing: %d RRSIG (omitted)", n)})
 	}
 
@@ -112,7 +113,7 @@ func soaSerials(changes []diff.Change) (oldSerial, newSerial string, ok bool) {
 func recordBlocks(sub []diff.Change) []block {
 	grouped := diff.CategorizeChanges(sub)
 	var blocks []block
-	for _, cat := range diff.SubstantiveCategories() {
+	for _, cat := range diff.Categories() {
 		catChanges := grouped[cat]
 		if len(catChanges) == 0 {
 			continue
@@ -130,7 +131,7 @@ func recordBlocks(sub []diff.Change) []block {
 func aggregatedBlocks(sub []diff.Change) []block {
 	grouped := diff.CategorizeChanges(sub)
 	var blocks []block
-	for _, cat := range diff.SubstantiveCategories() {
+	for _, cat := range diff.Categories() {
 		catChanges := grouped[cat]
 		if len(catChanges) == 0 {
 			continue

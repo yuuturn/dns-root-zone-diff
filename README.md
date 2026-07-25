@@ -60,18 +60,27 @@ web:
 
 検知した変更は RR type でカテゴリ分けする。
 
-| カテゴリ | 対象 RR type | 実質的な変更か |
-| --- | --- | --- |
-| `delegation` | NS | ○ |
-| `DNSSEC` | DS, DNSKEY, NSEC, NSEC3PARAM | ○ |
-| `glue` | A, AAAA | ○ |
-| `other` | 上記以外 | ○ |
-| `signature` | RRSIG | × (再署名で毎回入れ替わる) |
-| `zone` | SOA, ZONEMD | × (再署名ごとに必ず変わる) |
+| カテゴリ | 対象 RR type |
+| --- | --- |
+| `delegation` | NS |
+| `DNSSEC` | DS, DNSKEY, NSEC, NSEC3PARAM |
+| `glue` | A, AAAA |
+| `signature` | RRSIG |
+| `zone` | SOA, ZONEMD |
+| `other` | 上記以外 |
 
-root zone は12時間ごとに再署名され、その際 RRSIG 約2,800件が入れ替わって SOA serial と
-ZONEMD ダイジェストも更新される。この機械的な変更だけの回 (差分5,000件超になる) は
-**Slack / X へ通知しない**。Web UI には全件が履歴として残る。
+root zone は12時間ごとに再署名され、その際 RRSIG 約2,800レコードが入れ替わって
+SOA serial と ZONEMD の serial/digest も更新される。この**機械的な変更**
+(差分5,000件超になる) だけの回は **Slack / X へ通知しない**。Web UI には全件が
+履歴として残る。
+
+機械的な変更と判定するのは次の3つだけで、同じ RR type でもそれ以外の変更は通知する。
+
+- RRSIG の入れ替え
+- SOA の serial だけが変わった modified (MNAME/RNAME/refresh/retry/expire/minimum
+  や TTL が変わった場合、追加・削除の場合は通知する)
+- ZONEMD の serial と digest だけが変わった modified (scheme/hash algorithm や TTL が
+  変わった場合、追加・削除の場合は通知する)
 
 実質的な変更があった回は次の形式で通知する。X は280文字ごと、Slack は3,500文字ごとに
 分割し、2通以上になる場合はタイトル行に `(1/3)` のような番号を付ける。
