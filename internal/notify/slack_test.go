@@ -53,8 +53,10 @@ func TestSlackSkipsResigningOnlyChanges(t *testing.T) {
 
 	n := NewSlackNotifier(srv.URL)
 	changes := []diff.Change{
-		{Kind: diff.ChangeRemoved, Name: "example.", Type: "RRSIG", OldRData: "DS 8 1 86400 ... old"},
-		{Kind: diff.ChangeAdded, Name: "example.", Type: "RRSIG", NewRData: "DS 8 1 86400 ... new"},
+		{Kind: diff.ChangeRemoved, Name: "example.", Type: "RRSIG", OldTTL: 86400,
+			OldRData: "DS 8 1 86400 20260806050000 20260724040000 57780 . AAAA"},
+		{Kind: diff.ChangeAdded, Name: "example.", Type: "RRSIG", NewTTL: 86400,
+			NewRData: "DS 8 1 86400 20260806170000 20260724160000 57780 . BBBB"},
 		{Kind: diff.ChangeModified, Name: ".", Type: "SOA", OldRData: "a. b. 1 1 1 1 1", NewRData: "a. b. 2 1 1 1 1"},
 	}
 	if err := n.Notify(context.Background(), changes); err != nil {

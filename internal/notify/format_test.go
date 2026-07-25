@@ -241,6 +241,60 @@ func TestFormatPostsFallsBackToTLDAggregation(t *testing.T) {
 	}
 }
 
+// longName は 1行で上限を超える長さの owner name を返す。
+func longName(tld string) string {
+	return "ns1." + strings.Repeat("a", 260) + "." + tld
+}
+
+func TestFormatPostsFallsBackWhenARecordLineIsTooLong(t *testing.T) {
+	// レコード単位では 1行が上限を超えて落とされてしまうため、TLD 集約に切り替える。
+	changes := []diff.Change{
+		{Kind: diff.ChangeAdded, Name: longName("jp."), Type: "A", NewRData: "192.0.2.1"},
+	}
+	parts := FormatPosts(changes, tweetOpts())
+	if len(parts) == 0 {
+		t.Fatal("FormatPosts() = nil, want the change reported")
+	}
+	joined := strings.Join(parts, "\n")
+	if strings.Contains(joined, "more changes") {
+		t.Errorf("should fall back to aggregation instead of dropping:\n%s", joined)
+	}
+	if !strings.Contains(joined, "jp. A +1") {
+		t.Errorf("expected the TLD-aggregated line in:\n%s", joined)
+	}
+	for i, p := range parts {
+		if n := weightedLen(p); n > 280 {
+			t.Errorf("part %d is %d weighted chars (> 280):\n%s", i+1, n, p)
+		}
+	}
+}
+
+func TestFormatPostsKeepsLimitWhenNoteMustBeAdded(t *testing.T) {
+	// 集約しても 1行が上限を超える (TLD 自体が長い) ケース。落とした件数を伝えつつ
+	// どのパーツも上限を超えないこと。
+	huge := strings.Repeat("a", 300) + "."
+	changes := []diff.Change{
+		{Kind: diff.ChangeAdded, Name: huge, Type: "NS", NewRData: "ns1.example.net."},
+	}
+	for _, maxParts := range []int{0, 1, 4} {
+		opts := FormatOptions{MaxLen: 280, MaxParts: maxParts, Numbering: true, Weighted: true}
+		parts := FormatPosts(changes, opts)
+		if len(parts) == 0 {
+			t.Fatalf("maxParts=%d: FormatPosts() = nil", maxParts)
+		}
+		joined := strings.Join(parts, "\n")
+		if !strings.Contains(joined, "more changes") {
+			t.Errorf("maxParts=%d: dropped changes should be reported:\n%s", maxParts, joined)
+		}
+		for i, p := range parts {
+			if n := weightedLen(p); n > opts.MaxLen {
+				t.Errorf("maxParts=%d: part %d is %d weighted chars (> %d):\n%s",
+					maxParts, i+1, n, opts.MaxLen, p)
+			}
+		}
+	}
+}
+
 func TestFormatPostsTruncatesBeyondMaxParts(t *testing.T) {
 	// TLD 集約でも収まらない大量の実質的変更。
 	var changes []diff.Change
@@ -335,18 +389,61 @@ func TestWeightedLen(t *testing.T) {
 	}{
 		{"", 0},
 		{"abc", 3},
-		{"newgtld. NS ns1.newgtld.", 24},
 		{"あ", 2},          // CJK は重み2
 		{"あい", 4},         // 全角2文字
 		{"‐", 1},          // ハイフン (重み1の範囲)
 		{"①", 2},          // ① (重み1の範囲外)
 		{"\U0001F600", 2}, // 絵文字 (BMP 外)
 		{"a\U0001F600あ", 1 + 2 + 2},
+		// 自動リンクされるドメイン/URL は t.co の固定長として数える。
+		{"ns1.newgtld.", urlWeight},
+		{"http://a.io", urlWeight},
+		{"newgtld. NS ns1.newgtld.", 8 + 1 + 2 + 1 + urlWeight},
+		// 23文字を超える場合は実際の長さ (過小評価しない方向に倒す)。
+		{"ns-tld1.charlestonroadregistry.com.", 35},
+		// TLD にならないラベルで終わるものはリンクされない。
+		{"192.0.2.1", 9},
+		{"newgtld.", 8},
 	}
 	for _, tt := range tests {
 		if got := weightedLen(tt.in); got != tt.want {
 			t.Errorf("weightedLen(%q) = %d, want %d", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestIsAutoLinked(t *testing.T) {
+	linked := []string{
+		"example.net", "ns1.example.net.", "http://example.com/x", "https://a.io",
+		"ns1.xn--p1ai.", "a.root-servers.net.", "ns1.dns.nic.zip.",
+	}
+	for _, s := range linked {
+		if !isAutoLinked(s) {
+			t.Errorf("isAutoLinked(%q) = false, want true", s)
+		}
+	}
+	notLinked := []string{
+		// 単一ラベル (TLD 自体) は URL にならない。
+		"", "newgtld.", "xn--p1ai.", "NS", "192.0.2.1", "2001:db8::1", "12345", "8", "ttl",
+		"20260806050000", "A1B2C3D4E5F6",
+	}
+	for _, s := range notLinked {
+		if isAutoLinked(s) {
+			t.Errorf("isAutoLinked(%q) = true, want false", s)
+		}
+	}
+}
+
+func TestWeightedLenCountsWhitespace(t *testing.T) {
+	// 改行や連続空白も1文字として数えること。
+	if got, want := weightedLen("ab\ncd"), 5; got != want {
+		t.Errorf("weightedLen(%q) = %d, want %d", "ab\ncd", got, want)
+	}
+	if got, want := weightedLen("ab  cd"), 6; got != want {
+		t.Errorf("weightedLen(%q) = %d, want %d", "ab  cd", got, want)
+	}
+	if got, want := weightedLen("  ab"), 4; got != want {
+		t.Errorf("weightedLen(%q) = %d, want %d", "  ab", got, want)
 	}
 }
 

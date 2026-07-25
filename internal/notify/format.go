@@ -2,7 +2,9 @@ package notify
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/yfujii/dns-root-diff/internal/diff"
@@ -18,6 +20,9 @@ const (
 	moreReserve = 24
 	// numberingReserve は " (i/n)" の初期予約幅 (総パーツ数 99 まで)。
 	numberingReserve = len(" (99/99)")
+	// urlWeight は X が URL を t.co に短縮した後の固定長 (twitter-text の
+	// transformedURLLength)。短い URL もこの長さとして数えられる。
+	urlWeight = 23
 )
 
 // FormatOptions は投稿本文の生成オプション。
@@ -41,9 +46,53 @@ func (o FormatOptions) measure() func(string) int {
 
 // weightedLen は X (twitter-text) の重み付き文字数を返す。
 // twitter-text の既定設定では下記の範囲が重み1、それ以外は重み2。
-// 結合文字列 (絵文字の ZWJ シーケンスなど) や未正規化の文字列は X の計数より
-// 多めに数えるため、投稿が上限で拒否されることはない。
+// また URL は t.co の固定長 (urlWeight) に置き換えて数えられるため、
+// 自動リンクされるトークンは urlWeight を下回らないものとして数える。
+//
+// 結合文字列 (絵文字の ZWJ シーケンスなど) や未正規化の文字列、実際には
+// 自動リンクされないトークンは X の計数より多めに数える。過小評価して
+// 上限超過で投稿が拒否される方向には倒れない。
 func weightedLen(s string) int {
+	n := 0
+	for i, token := range strings.Fields(s) {
+		if i > 0 {
+			n++ // トークン間の区切り
+		}
+		w := runeWeightedLen(token)
+		// t.co 短縮は短い URL も 23 文字として数えられる。
+		if w < urlWeight && isAutoLinked(token) {
+			w = urlWeight
+		}
+		n += w
+	}
+	// strings.Fields は連続する空白をまとめるため、区切り文字の差分を補正する。
+	if extra := countSpace(s) - separatorCount(s); extra > 0 {
+		n += extra
+	}
+	return n
+}
+
+// countSpace は空白文字の数を返す。
+func countSpace(s string) int {
+	n := 0
+	for _, r := range s {
+		if unicode.IsSpace(r) {
+			n++
+		}
+	}
+	return n
+}
+
+// separatorCount は strings.Fields で数えられる区切りの個数を返す。
+func separatorCount(s string) int {
+	if n := len(strings.Fields(s)); n > 0 {
+		return n - 1
+	}
+	return 0
+}
+
+// runeWeightedLen は URL 換算を行わない重み付き文字数を返す。
+func runeWeightedLen(s string) int {
 	n := 0
 	for _, r := range s {
 		if isLightweightRune(r) {
@@ -53,6 +102,18 @@ func weightedLen(s string) int {
 		}
 	}
 	return n
+}
+
+// autoLinkedRe は twitter-text が自動リンクするトークンの近似。
+// scheme 付き URL と、TLD らしいラベル (英字のみ、または xn--) で終わるホスト名にマッチする。
+// root zone の RDATA に現れるドメイン名は実在の TLD で終わるため、この近似で十分。
+var autoLinkedRe = regexp.MustCompile(
+	`^(?:[A-Za-z][A-Za-z0-9+.\-]*://)?[A-Za-z0-9][A-Za-z0-9\-]*(?:\.[A-Za-z0-9][A-Za-z0-9\-]*)*\.(?:xn--[A-Za-z0-9\-]+|[A-Za-z]{2,})(?:[:/?#][^\s]*)?$`)
+
+// isAutoLinked はトークンが X で自動リンクされる (= 23文字として数えられる) かを返す。
+func isAutoLinked(token string) bool {
+	// 末尾の区切り文字は URL に含まれない。
+	return autoLinkedRe.MatchString(strings.TrimRight(token, ".,;:)]}"))
 }
 
 // isLightweightRune は twitter-text で重み1と定義された範囲かを返す。
@@ -84,8 +145,9 @@ type block struct {
 // FormatPosts は変更内容を MaxLen 以内のパーツ列にフォーマットする。
 // 実質的な変更 (再署名に伴う機械的変更を除いたもの) が無い場合は nil を返す。
 //
-// 明細はまずレコード単位で組み、MaxParts に収まらない場合は TLD ごとの集約に切り替える。
-// それでも収まらない場合は MaxParts で打ち切り、末尾に落とした件数を明記する。
+// 明細はまずレコード単位で組み、MaxParts に収まらない場合や 1行が長すぎて明細を
+// 落とす場合は TLD ごとの集約に切り替える。それでも収まらない場合は MaxParts で
+// 打ち切り、末尾に落とした件数を明記する。
 func FormatPosts(changes []diff.Change, opts FormatOptions) []string {
 	if opts.MaxLen <= 0 {
 		return nil
@@ -98,13 +160,14 @@ func FormatPosts(changes []diff.Change, opts FormatOptions) []string {
 	overview := overviewBlock(changes, sub)
 
 	for _, detail := range [][]block{recordBlocks(sub), aggregatedBlocks(sub)} {
-		parts, _ := pack(append([]block{overview}, detail...), opts, 0)
-		if opts.MaxParts <= 0 || len(parts) <= opts.MaxParts {
+		parts, dropped := pack(append([]block{overview}, detail...), opts, 0)
+		// 1件も落とさずに MaxParts に収まった候補だけを採用する。
+		if dropped == 0 && (opts.MaxParts <= 0 || len(parts) <= opts.MaxParts) {
 			return parts
 		}
 	}
 
-	// 集約でも MaxParts に収まらない場合は打ち切る。
+	// 集約でも収まらない場合は打ち切る。
 	parts, _ := pack(append([]block{overview}, aggregatedBlocks(sub)...), opts, opts.MaxParts)
 	return parts
 }
@@ -263,6 +326,7 @@ func pack(blocks []block, opts FormatOptions, maxParts int) (parts []string, dro
 // 長さは measure で数える (X は重み付き文字数、それ以外は rune 数)。
 func packOnce(blocks []block, limit, maxParts int, measure func(string) int) ([][]string, int) {
 	var packed [][]string
+	var packedLen []int // packed 各パーツの長さ (打ち切り行を追記できるか判定するため)
 	cur := []string{postTitle}
 	curLen := measure(postTitle)
 	dropped := 0
@@ -270,6 +334,7 @@ func packOnce(blocks []block, limit, maxParts int, measure func(string) int) ([]
 
 	flush := func() {
 		packed = append(packed, cur)
+		packedLen = append(packedLen, curLen)
 		cur = []string{postTitle}
 		curLen = measure(postTitle)
 	}
@@ -325,11 +390,17 @@ func packOnce(blocks []block, limit, maxParts int, measure func(string) int) ([]
 	}
 
 	if dropped > 0 {
-		if len(packed) == 0 {
-			packed = append(packed, []string{postTitle})
-		}
+		note := fmt.Sprintf("... +%d more changes", dropped)
+		// 末尾パーツに追記して上限を超えるなら別パーツにする。
+		// maxParts 指定時は最後のパーツで moreReserve を予約しているのでここには来ない。
 		last := len(packed) - 1
-		packed[last] = append(packed[last], fmt.Sprintf("... +%d more changes", dropped))
+		if last >= 0 && packedLen[last]+1+measure(note) <= limit {
+			packed[last] = append(packed[last], note)
+			packedLen[last] += 1 + measure(note)
+		} else {
+			packed = append(packed, []string{postTitle, note})
+			packedLen = append(packedLen, measure(postTitle)+1+measure(note))
+		}
 	}
 	return packed, dropped
 }

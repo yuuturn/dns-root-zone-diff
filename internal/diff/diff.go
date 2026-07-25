@@ -262,6 +262,61 @@ func CountByCategory(changes []Change) map[Category]int {
 	return counts
 }
 
+// mechanicalSpec は再署名のたびに RDATA の一部が更新される RR type の定義。
+// keyFields は再署名では変わらないフィールドで、RRset 内でレコードを識別する。
+// keyFields と TTL が一致する旧新のレコードは、定常的な更新として扱う。
+type mechanicalSpec struct {
+	fields    int
+	keyFields []int
+}
+
+var mechanicalSpecs = map[string]mechanicalSpec{
+	// RRSIG: TYPE-COVERED ALGORITHM LABELS ORIGINAL-TTL EXPIRATION INCEPTION KEY-TAG SIGNER SIGNATURE
+	// 再署名で expiration/inception/signature が入れ替わる。ZSK ロール時は key tag も
+	// 変わるが、鍵の交代自体は apex の DNSKEY 変更として通知される。
+	"RRSIG": {fields: 9, keyFields: []int{0, 1, 2, 3, 7}},
+	// SOA: MNAME RNAME SERIAL REFRESH RETRY EXPIRE MINIMUM
+	"SOA": {fields: 7, keyFields: []int{0, 1, 3, 4, 5, 6}},
+	// ZONEMD: SERIAL SCHEME HASH-ALGORITHM DIGEST
+	"ZONEMD": {fields: 4, keyFields: []int{1, 2}},
+}
+
+// recordKey は RRset 内のレコードを再署名をまたいで識別する鍵。
+type recordKey struct {
+	rrType string
+	name   string
+	ttl    uint32
+	fields string // keyFields の値を連結したもの
+}
+
+// keyOf は RDATA から recordKey を作る。フィールド数が定義と異なる場合は失敗する。
+func (s mechanicalSpec) keyOf(rrType, name, rdata string, ttl uint32) (recordKey, bool) {
+	fields := strings.Fields(rdata)
+	if len(fields) != s.fields {
+		return recordKey{}, false
+	}
+	parts := make([]string, 0, len(s.keyFields))
+	for _, i := range s.keyFields {
+		parts = append(parts, fields[i])
+	}
+	return recordKey{rrType: rrType, name: name, ttl: ttl, fields: strings.Join(parts, "\x00")}, true
+}
+
+// sameKey は旧新の RDATA が keyFields で一致するかを返す。
+func (s mechanicalSpec) sameKey(oldRData, newRData string) bool {
+	oldFields := strings.Fields(oldRData)
+	newFields := strings.Fields(newRData)
+	if len(oldFields) != s.fields || len(newFields) != s.fields {
+		return false
+	}
+	for _, i := range s.keyFields {
+		if oldFields[i] != newFields[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // MarkMechanical は各変更が再署名に伴う機械的な変更かを、changes と同じ長さの
 // スライスで返す。
 //
@@ -269,107 +324,47 @@ func CountByCategory(changes []Change) map[Category]int {
 // SOA serial と ZONEMD の serial/digest も必ず更新される。これらは運用上の
 // 意味を持たないため通知の対象外とする。
 //
-// 同じ RR type でも、SOA の MNAME/RNAME/refresh/retry/expire/minimum や
-// ZONEMD の scheme/hash algorithm の変更、TTL の変更、digest 自体の追加・削除は
-// 機械的な変更ではない。
+// 判定は RR type ではなく旧新の対応付けで行う。RRset が複数レコードを持つ場合、
+// Diff は modified に畳めず removed+added に分解するため、mechanicalSpec の
+// keyFields と TTL で組を作り、組になったものだけを機械的変更とする。
+// 相手のいない追加・削除 (署名の欠落や digest algorithm のロールオーバー) や、
+// TTL・keyFields が変わった変更は実質的な変更として残す。
 func MarkMechanical(changes []Change) []bool {
 	mechanical := make([]bool, len(changes))
 
-	// ZONEMD が複数レコードある RRset は Diff が modified に畳めず removed+added に
-	// 分解するため、(scheme, hash algorithm) 単位で旧新を対応付ける必要がある。
-	removedZONEMD := make(map[zonemdKey][]int)
-	addedZONEMD := make(map[zonemdKey][]int)
+	removed := make(map[recordKey][]int)
+	added := make(map[recordKey][]int)
 
 	for i, c := range changes {
-		if isMechanical(c) {
-			mechanical[i] = true
-			continue
-		}
-		if c.Type != "ZONEMD" {
+		spec, ok := mechanicalSpecs[c.Type]
+		if !ok {
 			continue
 		}
 		switch c.Kind {
+		case ChangeModified:
+			if c.OldTTL == c.NewTTL && spec.sameKey(c.OldRData, c.NewRData) {
+				mechanical[i] = true
+			}
 		case ChangeRemoved:
-			if k, ok := zonemdKeyOf(c.Name, c.OldRData, c.OldTTL); ok {
-				removedZONEMD[k] = append(removedZONEMD[k], i)
+			if k, ok := spec.keyOf(c.Type, c.Name, c.OldRData, c.OldTTL); ok {
+				removed[k] = append(removed[k], i)
 			}
 		case ChangeAdded:
-			if k, ok := zonemdKeyOf(c.Name, c.NewRData, c.NewTTL); ok {
-				addedZONEMD[k] = append(addedZONEMD[k], i)
+			if k, ok := spec.keyOf(c.Type, c.Name, c.NewRData, c.NewTTL); ok {
+				added[k] = append(added[k], i)
 			}
 		}
 	}
 
-	// scheme と hash algorithm が一致する removed/added の組は serial/digest の
-	// 更新なので機械的変更。相手のない側は digest の追加・削除として残す。
-	for k, removed := range removedZONEMD {
-		added := addedZONEMD[k]
-		for j := 0; j < len(removed) && j < len(added); j++ {
-			mechanical[removed[j]] = true
-			mechanical[added[j]] = true
+	for k, rem := range removed {
+		add := added[k]
+		for j := 0; j < len(rem) && j < len(add); j++ {
+			mechanical[rem[j]] = true
+			mechanical[add[j]] = true
 		}
 	}
 
 	return mechanical
-}
-
-// zonemdKey は ZONEMD の digest を識別する (owner, scheme, hash algorithm, TTL)。
-type zonemdKey struct {
-	name      string
-	scheme    string
-	algorithm string
-	ttl       uint32
-}
-
-// zonemdKeyOf は ZONEMD の RDATA (SERIAL SCHEME HASH-ALGORITHM DIGEST) から鍵を作る。
-func zonemdKeyOf(name, rdata string, ttl uint32) (zonemdKey, bool) {
-	fields := strings.Fields(rdata)
-	if len(fields) != 4 {
-		return zonemdKey{}, false
-	}
-	return zonemdKey{name: name, scheme: fields[1], algorithm: fields[2], ttl: ttl}, true
-}
-
-// isMechanical は単独の変更だけで機械的変更と判定できるかを返す。
-func isMechanical(c Change) bool {
-	switch c.Type {
-	case "RRSIG":
-		return true
-	case "SOA":
-		// SOA RDATA: MNAME RNAME SERIAL REFRESH RETRY EXPIRE MINIMUM
-		return isRDataUpdateOnly(c, 7, 2)
-	case "ZONEMD":
-		// ZONEMD RDATA: SERIAL SCHEME HASH-ALGORITHM DIGEST
-		return isRDataUpdateOnly(c, 4, 0, 3)
-	default:
-		return false
-	}
-}
-
-// isRDataUpdateOnly は TTL が変わらない modified で、RDATA の差分が
-// updatable のフィールドだけに収まっているかを返す。
-func isRDataUpdateOnly(c Change, wantFields int, updatable ...int) bool {
-	if c.Kind != ChangeModified || c.OldTTL != c.NewTTL {
-		return false
-	}
-	oldFields := strings.Fields(c.OldRData)
-	newFields := strings.Fields(c.NewRData)
-	if len(oldFields) != wantFields || len(newFields) != wantFields {
-		return false
-	}
-	skip := make(map[int]bool, len(updatable))
-	for _, i := range updatable {
-		skip[i] = true
-	}
-	for i := range oldFields {
-		if skip[i] {
-			continue
-		}
-		if oldFields[i] != newFields[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // Substantive は実質的な変更 (再署名に伴う機械的変更を除いたもの) のみを抽出する。

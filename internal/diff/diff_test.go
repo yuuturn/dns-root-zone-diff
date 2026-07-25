@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/yfujii/dns-root-diff/internal/zone"
@@ -244,6 +245,12 @@ func TestCategorizeChanges(t *testing.T) {
 	}
 }
 
+// rrsig は RRSIG の RDATA を組み立てる。
+// TYPE-COVERED ALGORITHM LABELS ORIGINAL-TTL EXPIRATION INCEPTION KEY-TAG SIGNER SIGNATURE
+func rrsig(covered, expiration, inception, keyTag, signature string) string {
+	return covered + " 8 1 86400 " + expiration + " " + inception + " " + keyTag + " . " + signature
+}
+
 func TestMarkMechanicalSingleChange(t *testing.T) {
 	const (
 		soaOld = "a.root-servers.net. nstld.verisign-grs.com. 2026072500 1800 900 604800 86400"
@@ -255,9 +262,44 @@ func TestMarkMechanicalSingleChange(t *testing.T) {
 		want   bool
 	}{
 		{
-			name:   "RRSIG replacement is mechanical",
-			change: Change{Kind: ChangeRemoved, Name: "example.", Type: "RRSIG", OldRData: "DS 8 1 86400 ... old"},
-			want:   true,
+			name: "RRSIG re-signing is mechanical",
+			change: Change{Kind: ChangeModified, Name: "example.", Type: "RRSIG", OldTTL: 86400, NewTTL: 86400,
+				OldRData: rrsig("DS", "20260806050000", "20260724040000", "57780", "AAAA"),
+				NewRData: rrsig("DS", "20260806170000", "20260724160000", "57780", "BBBB")},
+			want: true,
+		},
+		{
+			name: "RRSIG key tag change (ZSK roll) is mechanical",
+			change: Change{Kind: ChangeModified, Name: "example.", Type: "RRSIG", OldTTL: 86400, NewTTL: 86400,
+				OldRData: rrsig("DS", "20260806050000", "20260724040000", "57780", "AAAA"),
+				NewRData: rrsig("DS", "20260806170000", "20260724160000", "12345", "BBBB")},
+			want: true,
+		},
+		{
+			name: "RRSIG TTL change is not mechanical",
+			change: Change{Kind: ChangeModified, Name: "example.", Type: "RRSIG", OldTTL: 86400, NewTTL: 172800,
+				OldRData: rrsig("DS", "20260806050000", "20260724040000", "57780", "AAAA"),
+				NewRData: rrsig("DS", "20260806050000", "20260724040000", "57780", "AAAA")},
+			want: false,
+		},
+		{
+			name: "RRSIG algorithm change is not mechanical",
+			change: Change{Kind: ChangeModified, Name: "example.", Type: "RRSIG", OldTTL: 86400, NewTTL: 86400,
+				OldRData: "DS 8 1 86400 20260806050000 20260724040000 57780 . AAAA",
+				NewRData: "DS 13 1 86400 20260806170000 20260724160000 57780 . BBBB"},
+			want: false,
+		},
+		{
+			name: "unpaired RRSIG removal is not mechanical",
+			change: Change{Kind: ChangeRemoved, Name: "example.", Type: "RRSIG", OldTTL: 86400,
+				OldRData: rrsig("DS", "20260806050000", "20260724040000", "57780", "AAAA")},
+			want: false,
+		},
+		{
+			name: "unpaired RRSIG addition is not mechanical",
+			change: Change{Kind: ChangeAdded, Name: "example.", Type: "RRSIG", NewTTL: 86400,
+				NewRData: rrsig("DS", "20260806050000", "20260724040000", "57780", "AAAA")},
+			want: false,
 		},
 		{
 			name: "SOA serial bump is mechanical",
@@ -342,6 +384,43 @@ func TestMarkMechanicalSingleChange(t *testing.T) {
 	}
 }
 
+func TestMarkMechanicalPairsRRSIG(t *testing.T) {
+	// RRSIG が複数ある RRset は Diff が removed+added に分解する。
+	// (type covered, algorithm, labels, original TTL, signer, TTL) が一致する組は再署名。
+	changes := []Change{
+		{Kind: ChangeRemoved, Name: "example.", Type: "RRSIG", OldTTL: 86400,
+			OldRData: rrsig("DS", "20260806050000", "20260724040000", "57780", "AAAA")},
+		{Kind: ChangeRemoved, Name: "example.", Type: "RRSIG", OldTTL: 86400,
+			OldRData: rrsig("NSEC", "20260806050000", "20260724040000", "57780", "BBBB")},
+		{Kind: ChangeAdded, Name: "example.", Type: "RRSIG", NewTTL: 86400,
+			NewRData: rrsig("DS", "20260806170000", "20260724160000", "57780", "CCCC")},
+		{Kind: ChangeAdded, Name: "example.", Type: "RRSIG", NewTTL: 86400,
+			NewRData: rrsig("NSEC", "20260806170000", "20260724160000", "57780", "DDDD")},
+	}
+	if got := Substantive(changes); len(got) != 0 {
+		t.Errorf("Substantive() = %+v, want empty (routine re-signing)", got)
+	}
+}
+
+func TestMarkMechanicalKeepsUnpairedRRSIG(t *testing.T) {
+	// DS の署名が再署名されず失われたケース: NSEC の入れ替えだけが組になる。
+	changes := []Change{
+		{Kind: ChangeRemoved, Name: "example.", Type: "RRSIG", OldTTL: 86400,
+			OldRData: rrsig("DS", "20260806050000", "20260724040000", "57780", "AAAA")},
+		{Kind: ChangeRemoved, Name: "example.", Type: "RRSIG", OldTTL: 86400,
+			OldRData: rrsig("NSEC", "20260806050000", "20260724040000", "57780", "BBBB")},
+		{Kind: ChangeAdded, Name: "example.", Type: "RRSIG", NewTTL: 86400,
+			NewRData: rrsig("NSEC", "20260806170000", "20260724160000", "57780", "DDDD")},
+	}
+	got := Substantive(changes)
+	if len(got) != 1 {
+		t.Fatalf("Substantive() = %d changes, want 1: %+v", len(got), got)
+	}
+	if got[0].Kind != ChangeRemoved || !strings.HasPrefix(got[0].OldRData, "DS ") {
+		t.Errorf("Substantive() kept %+v, want the unpaired DS signature removal", got[0])
+	}
+}
+
 func TestMarkMechanicalPairsMultipleZONEMD(t *testing.T) {
 	// ZONEMD が複数レコードあると Diff は modified に畳めず removed+added になる。
 	// (scheme, hash algorithm) が一致する組は serial/digest の更新なので機械的変更。
@@ -408,8 +487,10 @@ func TestMarkMechanicalKeepsUnpairedZONEMD(t *testing.T) {
 
 func TestCountMechanical(t *testing.T) {
 	changes := []Change{
-		{Kind: ChangeRemoved, Name: "a.", Type: "RRSIG", OldRData: "DS 8 1 ... old"},
-		{Kind: ChangeAdded, Name: "a.", Type: "RRSIG", NewRData: "DS 8 1 ... new"},
+		{Kind: ChangeRemoved, Name: "a.", Type: "RRSIG", OldTTL: 86400,
+			OldRData: rrsig("DS", "20260806050000", "20260724040000", "57780", "AAAA")},
+		{Kind: ChangeAdded, Name: "a.", Type: "RRSIG", NewTTL: 86400,
+			NewRData: rrsig("DS", "20260806170000", "20260724160000", "57780", "BBBB")},
 		{Kind: ChangeModified, Name: ".", Type: "SOA", OldRData: "a. b. 1 1 1 1 1", NewRData: "a. b. 2 1 1 1 1"},
 		{Kind: ChangeAdded, Name: "b.", Type: "NS", NewRData: "ns1.b."},
 	}
@@ -424,8 +505,10 @@ func TestCountMechanical(t *testing.T) {
 func TestSubstantiveDropsResigningNoise(t *testing.T) {
 	// 再署名だけの回: RRSIG の入れ替えと SOA serial / ZONEMD の更新のみ。
 	resigning := []Change{
-		{Kind: ChangeRemoved, Name: "example.", Type: "RRSIG", OldRData: "DS 8 1 86400 ... old"},
-		{Kind: ChangeAdded, Name: "example.", Type: "RRSIG", NewRData: "DS 8 1 86400 ... new"},
+		{Kind: ChangeRemoved, Name: "example.", Type: "RRSIG", OldTTL: 86400,
+			OldRData: rrsig("DS", "20260806050000", "20260724040000", "57780", "AAAA")},
+		{Kind: ChangeAdded, Name: "example.", Type: "RRSIG", NewTTL: 86400,
+			NewRData: rrsig("DS", "20260806170000", "20260724160000", "57780", "BBBB")},
 		{Kind: ChangeModified, Name: ".", Type: "SOA", OldRData: "a. b. 1 1 1 1 1", NewRData: "a. b. 2 1 1 1 1"},
 		{Kind: ChangeModified, Name: ".", Type: "ZONEMD", OldRData: "1 1 241 old", NewRData: "2 1 241 new"},
 	}
