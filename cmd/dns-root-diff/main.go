@@ -125,6 +125,7 @@ func runOnce(ctx context.Context, cfg config.Config, configPath string) error {
 	}
 
 	changes := diff.Diff(oldRecords, records)
+	diff.SortChanges(changes)
 	if len(changes) == 0 {
 		fmt.Println("no changes detected")
 	} else {

@@ -1,6 +1,8 @@
 package diff
 
 import (
+	"sort"
+
 	"github.com/yfujii/dns-root-diff/internal/zone"
 )
 
@@ -175,6 +177,27 @@ func Diff(oldRecords, newRecords []zone.Record) []Change {
 	}
 
 	return changes
+}
+
+// SortChanges は変更群を (Name, Type, Kind, OldRData, NewRData) の順で安定ソートする。
+// Diff の出力は map の反復順に依存し非決定的なため、通知や保存の前に呼ぶ。
+func SortChanges(changes []Change) {
+	sort.SliceStable(changes, func(i, j int) bool {
+		a, b := changes[i], changes[j]
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		if a.Type != b.Type {
+			return a.Type < b.Type
+		}
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.OldRData != b.OldRData {
+			return a.OldRData < b.OldRData
+		}
+		return a.NewRData < b.NewRData
+	})
 }
 
 // Categorize は変更をカテゴリに分類する。
