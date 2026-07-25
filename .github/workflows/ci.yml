@@ -19,6 +19,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/frontend/package-lock.json
+
+      - name: Frontend build
+        run: cd web/frontend && npm ci && npm run build
+
+      # コミット済みの internal/web/static が最新の frontend ソースと
+      # 一致していることを検証する (ビルド忘れの検出)
+      - name: Frontend dist check
+        run: git diff --exit-code internal/web/static
+
       - uses: actions/setup-go@v5
         with:
           go-version: stable
