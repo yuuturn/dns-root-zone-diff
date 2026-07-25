@@ -1,0 +1,16 @@
+# Gitleaks configuration for dns-root-diff
+# Extends the default ruleset and keeps config/runtime secret paths out of scans.
+
+title = "dns-root-diff"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Project-local paths that may contain runtime secrets (never committed)"
+paths = [
+  '''(^|/)config\.yaml$''',
+  '''(^|/)data/''',
+  '''(^|/)\.hermes/''',
+  '''(^|/)HANDOFF\.md$''',
+]

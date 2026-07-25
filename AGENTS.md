@@ -17,8 +17,9 @@ https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2
 - デプロイ方式: macOS arm64 で GOOS=linux GOARCH=amd64 クロスコンパイル → scp → systemd
 - 開発手法: TDD (テスト駆動開発)
 - フォーマッター / Linter / 型チェック: golangci-lint v2, go vet, gofmt
-- pre-commit: gofmt, go vet, go test, golangci-lint をフックで実行
-- CI: GitHub Actions (テスト + lint)
+- シークレットスキャン: gitleaks v8 (`.gitleaks.toml`)
+- pre-commit: gitleaks, gofmt, go vet, go test, golangci-lint をフックで実行
+- CI: GitHub Actions (gitleaks + テスト + lint)
 
 ## アーキテクチャ
 
@@ -69,5 +70,7 @@ git push -u origin feat/update-notifier
 ## 注意事項
 
 - 設定ファイルは秘密情報を含む可能性があるため、パーミッションを適切に管理する。
+- トークンや Webhook URL をリポジトリに commit しない。`config.yaml` は gitignore 済み。
+- コミット前に gitleaks が秘密情報を検出する。ローカル確認は `make secrets`。
 - VPS では SELinux が有効な場合があるため、バイナリと systemd unit ファイルのラベルを `restorecon` で修正する。
 - main への直接 push を防ぐため、GitHub の branch protection rule で "Require a pull request before merging" を有効化する。
