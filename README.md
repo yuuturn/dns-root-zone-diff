@@ -77,10 +77,12 @@ SOA serial と ZONEMD の serial/digest も更新される。この**機械的�
 機械的な変更と判定するのは次の3つだけで、同じ RR type でもそれ以外の変更は通知する。
 
 - RRSIG の入れ替え
-- SOA の serial だけが変わった modified (MNAME/RNAME/refresh/retry/expire/minimum
-  や TTL が変わった場合、追加・削除の場合は通知する)
-- ZONEMD の serial と digest だけが変わった modified (scheme/hash algorithm や TTL が
-  変わった場合、追加・削除の場合は通知する)
+- SOA の serial だけが変わった場合 (MNAME/RNAME/refresh/retry/expire/minimum や
+  TTL が変わった場合、追加・削除の場合は通知する)
+- ZONEMD の serial と digest だけが変わった場合 (scheme/hash algorithm や TTL が
+  変わった場合は通知する)。ZONEMD が複数レコード公開されている場合は
+  (scheme, hash algorithm) 単位で旧新を対応付けるため、digest 自体の追加・削除
+  (algorithm ロールオーバー) だけが通知される
 
 実質的な変更があった回は次の形式で通知する。X は280文字ごと、Slack は3,500文字ごとに
 分割し、2通以上になる場合はタイトル行に `(1/3)` のような番号を付ける。

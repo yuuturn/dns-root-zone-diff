@@ -244,7 +244,7 @@ func TestCategorizeChanges(t *testing.T) {
 	}
 }
 
-func TestIsMechanical(t *testing.T) {
+func TestMarkMechanicalSingleChange(t *testing.T) {
 	const (
 		soaOld = "a.root-servers.net. nstld.verisign-grs.com. 2026072500 1800 900 604800 86400"
 		zmdOld = "2026072500 1 241 ABCDEF"
@@ -335,8 +335,72 @@ func TestIsMechanical(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsMechanical(tt.change); got != tt.want {
-				t.Errorf("IsMechanical() = %v, want %v", got, tt.want)
+			if got := MarkMechanical([]Change{tt.change})[0]; got != tt.want {
+				t.Errorf("MarkMechanical() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMarkMechanicalPairsMultipleZONEMD(t *testing.T) {
+	// ZONEMD が複数レコードあると Diff は modified に畳めず removed+added になる。
+	// (scheme, hash algorithm) が一致する組は serial/digest の更新なので機械的変更。
+	changes := []Change{
+		{Kind: ChangeRemoved, Name: ".", Type: "ZONEMD", OldTTL: 86400, OldRData: "2026072500 1 1 AAAA"},
+		{Kind: ChangeRemoved, Name: ".", Type: "ZONEMD", OldTTL: 86400, OldRData: "2026072500 1 2 BBBB"},
+		{Kind: ChangeAdded, Name: ".", Type: "ZONEMD", NewTTL: 86400, NewRData: "2026072501 1 1 CCCC"},
+		{Kind: ChangeAdded, Name: ".", Type: "ZONEMD", NewTTL: 86400, NewRData: "2026072501 1 2 DDDD"},
+	}
+	if got := Substantive(changes); len(got) != 0 {
+		t.Errorf("Substantive() = %+v, want empty (routine re-signing of 2 digests)", got)
+	}
+}
+
+func TestMarkMechanicalKeepsUnpairedZONEMD(t *testing.T) {
+	tests := []struct {
+		name    string
+		changes []Change
+		want    int // 実質的な変更として残る件数
+	}{
+		{
+			name: "new digest algorithm added",
+			changes: []Change{
+				{Kind: ChangeRemoved, Name: ".", Type: "ZONEMD", OldTTL: 86400, OldRData: "2026072500 1 1 AAAA"},
+				{Kind: ChangeAdded, Name: ".", Type: "ZONEMD", NewTTL: 86400, NewRData: "2026072501 1 1 CCCC"},
+				{Kind: ChangeAdded, Name: ".", Type: "ZONEMD", NewTTL: 86400, NewRData: "2026072501 1 2 DDDD"},
+			},
+			want: 1, // algorithm 2 の追加だけが残る
+		},
+		{
+			name: "digest algorithm retired",
+			changes: []Change{
+				{Kind: ChangeRemoved, Name: ".", Type: "ZONEMD", OldTTL: 86400, OldRData: "2026072500 1 1 AAAA"},
+				{Kind: ChangeRemoved, Name: ".", Type: "ZONEMD", OldTTL: 86400, OldRData: "2026072500 1 2 BBBB"},
+				{Kind: ChangeAdded, Name: ".", Type: "ZONEMD", NewTTL: 86400, NewRData: "2026072501 1 1 CCCC"},
+			},
+			want: 1, // algorithm 2 の削除だけが残る
+		},
+		{
+			name: "TTL changed",
+			changes: []Change{
+				{Kind: ChangeRemoved, Name: ".", Type: "ZONEMD", OldTTL: 86400, OldRData: "2026072500 1 1 AAAA"},
+				{Kind: ChangeAdded, Name: ".", Type: "ZONEMD", NewTTL: 172800, NewRData: "2026072501 1 1 CCCC"},
+			},
+			want: 2,
+		},
+		{
+			name: "scheme changed",
+			changes: []Change{
+				{Kind: ChangeRemoved, Name: ".", Type: "ZONEMD", OldTTL: 86400, OldRData: "2026072500 1 1 AAAA"},
+				{Kind: ChangeAdded, Name: ".", Type: "ZONEMD", NewTTL: 86400, NewRData: "2026072501 2 1 CCCC"},
+			},
+			want: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Substantive(tt.changes); len(got) != tt.want {
+				t.Errorf("Substantive() = %d changes, want %d: %+v", len(got), tt.want, got)
 			}
 		})
 	}

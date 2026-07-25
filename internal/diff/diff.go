@@ -262,15 +262,76 @@ func CountByCategory(changes []Change) map[Category]int {
 	return counts
 }
 
-// IsMechanical は再署名に伴う機械的な変更かを返す。
+// MarkMechanical は各変更が再署名に伴う機械的な変更かを、changes と同じ長さの
+// スライスで返す。
+//
 // root zone は 12 時間ごとに再署名され、その際 RRSIG が全て入れ替わり、
 // SOA serial と ZONEMD の serial/digest も必ず更新される。これらは運用上の
 // 意味を持たないため通知の対象外とする。
 //
 // 同じ RR type でも、SOA の MNAME/RNAME/refresh/retry/expire/minimum や
-// ZONEMD の scheme/hash algorithm の変更、TTL の変更、レコードの追加・削除は
-// 機械的な変更ではないため false を返す。
-func IsMechanical(c Change) bool {
+// ZONEMD の scheme/hash algorithm の変更、TTL の変更、digest 自体の追加・削除は
+// 機械的な変更ではない。
+func MarkMechanical(changes []Change) []bool {
+	mechanical := make([]bool, len(changes))
+
+	// ZONEMD が複数レコードある RRset は Diff が modified に畳めず removed+added に
+	// 分解するため、(scheme, hash algorithm) 単位で旧新を対応付ける必要がある。
+	removedZONEMD := make(map[zonemdKey][]int)
+	addedZONEMD := make(map[zonemdKey][]int)
+
+	for i, c := range changes {
+		if isMechanical(c) {
+			mechanical[i] = true
+			continue
+		}
+		if c.Type != "ZONEMD" {
+			continue
+		}
+		switch c.Kind {
+		case ChangeRemoved:
+			if k, ok := zonemdKeyOf(c.Name, c.OldRData, c.OldTTL); ok {
+				removedZONEMD[k] = append(removedZONEMD[k], i)
+			}
+		case ChangeAdded:
+			if k, ok := zonemdKeyOf(c.Name, c.NewRData, c.NewTTL); ok {
+				addedZONEMD[k] = append(addedZONEMD[k], i)
+			}
+		}
+	}
+
+	// scheme と hash algorithm が一致する removed/added の組は serial/digest の
+	// 更新なので機械的変更。相手のない側は digest の追加・削除として残す。
+	for k, removed := range removedZONEMD {
+		added := addedZONEMD[k]
+		for j := 0; j < len(removed) && j < len(added); j++ {
+			mechanical[removed[j]] = true
+			mechanical[added[j]] = true
+		}
+	}
+
+	return mechanical
+}
+
+// zonemdKey は ZONEMD の digest を識別する (owner, scheme, hash algorithm, TTL)。
+type zonemdKey struct {
+	name      string
+	scheme    string
+	algorithm string
+	ttl       uint32
+}
+
+// zonemdKeyOf は ZONEMD の RDATA (SERIAL SCHEME HASH-ALGORITHM DIGEST) から鍵を作る。
+func zonemdKeyOf(name, rdata string, ttl uint32) (zonemdKey, bool) {
+	fields := strings.Fields(rdata)
+	if len(fields) != 4 {
+		return zonemdKey{}, false
+	}
+	return zonemdKey{name: name, scheme: fields[1], algorithm: fields[2], ttl: ttl}, true
+}
+
+// isMechanical は単独の変更だけで機械的変更と判定できるかを返す。
+func isMechanical(c Change) bool {
 	switch c.Type {
 	case "RRSIG":
 		return true
@@ -313,9 +374,10 @@ func isRDataUpdateOnly(c Change, wantFields int, updatable ...int) bool {
 
 // Substantive は実質的な変更 (再署名に伴う機械的変更を除いたもの) のみを抽出する。
 func Substantive(changes []Change) []Change {
+	mechanical := MarkMechanical(changes)
 	var out []Change
-	for _, c := range changes {
-		if !IsMechanical(c) {
+	for i, c := range changes {
+		if !mechanical[i] {
 			out = append(out, c)
 		}
 	}
@@ -324,9 +386,10 @@ func Substantive(changes []Change) []Change {
 
 // CountMechanical は機械的変更のうち、指定 RR type の件数を返す。
 func CountMechanical(changes []Change, rrType string) int {
+	mechanical := MarkMechanical(changes)
 	n := 0
-	for _, c := range changes {
-		if c.Type == rrType && IsMechanical(c) {
+	for i, c := range changes {
+		if c.Type == rrType && mechanical[i] {
 			n++
 		}
 	}
