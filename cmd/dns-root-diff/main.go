@@ -111,9 +111,10 @@ func runOnce(ctx context.Context, cfg config.Config, configPath string) error {
 	fmt.Printf("parsed %d records\n", len(records))
 
 	s := store.New(cfg.DataDir)
+	hadPrevious := s.Exists()
 
 	var oldRecords []zone.Record
-	if s.Exists() {
+	if hadPrevious {
 		oldData, err := s.Load()
 		if err != nil {
 			return fmt.Errorf("load previous zone: %w", err)
@@ -134,6 +135,20 @@ func runOnce(ctx context.Context, cfg config.Config, configPath string) error {
 		for _, n := range notifiers {
 			if err := n.Notify(ctx, changes); err != nil {
 				fmt.Fprintf(os.Stderr, "notify %s failed: %v\n", n.Name(), err)
+			}
+		}
+		// 初回実行 (前回スナップショットなし) は全レコードが added になるため履歴には残さない。
+		if hadPrevious {
+			oldSerial, _ := zone.SOASerial(oldRecords)
+			newSerial, ok := zone.SOASerial(records)
+			if !ok {
+				// ID 生成にシリアルが必要なため、SOA が取れない場合のフォールバック。
+				newSerial = "unknown"
+			}
+			h := store.NewHistory(cfg.DataDir)
+			entry := store.NewEntry(time.Now().UTC(), oldSerial, newSerial, changes)
+			if err := h.Append(entry); err != nil {
+				fmt.Fprintf(os.Stderr, "record history failed: %v\n", err)
 			}
 		}
 	}
