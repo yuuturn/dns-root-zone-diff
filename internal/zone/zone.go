@@ -53,6 +53,23 @@ func Parse(data []byte) ([]Record, error) {
 	return records, nil
 }
 
+// SOASerial は SOA レコードの RData からシリアル番号を抽出する。
+// RData 形式: MNAME RNAME SERIAL REFRESH RETRY EXPIRE MINIMUM
+// SOA レコードが存在しないか RData が不正な場合は ok=false を返す。
+func SOASerial(records []Record) (serial string, ok bool) {
+	for _, r := range records {
+		if r.Type != "SOA" {
+			continue
+		}
+		fields := strings.Fields(r.RData)
+		if len(fields) < 3 {
+			return "", false
+		}
+		return fields[2], true
+	}
+	return "", false
+}
+
 func parseLine(line string, lastName string) (Record, error) {
 	nameInherited := len(line) > 0 && (line[0] == ' ' || line[0] == '\t')
 
