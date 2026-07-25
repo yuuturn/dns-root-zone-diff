@@ -27,10 +27,12 @@ https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2
 - `internal/fetcher`: HTTP で root zone 取得
 - `internal/zone`: zone ファイルパーサー
 - `internal/diff`: 新旧レコード差分検出 + カテゴリ分類
-- `internal/store`: ローカルディスクへのスナップショット保存
+- `internal/store`: ローカルディスクへのスナップショット保存 + diff 履歴の JSON 永続化 (`data_dir/diffs/`)
 - `internal/notify`: Notifier インターフェース、Slack Webhook、X API v2
 - `internal/config`: YAML 設定 + 環境変数オーバーライド
-- `deploy/`: systemd unit とデプロイシェル
+- `internal/web`: diff 履歴閲覧の HTTP API + 静的配信 (フロントエンドを go:embed)
+- `web/frontend/`: Web UI (Vite + React + @cloudflare/kumo)。ビルド成果物は `internal/web/static/` にコミットする
+- `deploy/`: systemd unit、デプロイシェル、nginx リバースプロキシ設定例
 
 ## 実行方法
 
@@ -41,6 +43,13 @@ https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2
 # 定期実行
 ./bin/dns-root-diff -config config.yaml
 ```
+
+## フロントエンド開発フロー
+
+- `web/frontend/` を変更したら `make frontend-build` を実行し、出力された `internal/web/static/` を**変更と同じコミットに含める**。
+- CI はフロントエンドを再ビルドして `git diff --exit-code internal/web/static` で一致を検証するため、ビルド忘れがあると CI が落ちる。
+- 通常の Go ビルド・デプロイには Node.js は不要 (成果物コミット済みのため)。
+- kumo の standalone CSS には任意の Tailwind ユーティリティが含まれない。レイアウト用クラスは `web/frontend/src/app.css` に定義する。
 
 ## デプロイ
 
@@ -73,4 +82,5 @@ git push -u origin feat/update-notifier
 - トークンや Webhook URL をリポジトリに commit しない。`config.yaml` は gitignore 済み。
 - コミット前に gitleaks が秘密情報を検出する。ローカル確認は `make secrets`。
 - VPS では SELinux が有効な場合があるため、バイナリと systemd unit ファイルのラベルを `restorecon` で修正する。
+- Web UI を nginx で公開する場合、SELinux では `setsebool -P httpd_can_network_connect 1` が必要 (`deploy/nginx.conf.example` 参照)。
 - main への直接 push を防ぐため、GitHub の branch protection rule で "Require a pull request before merging" を有効化する。
