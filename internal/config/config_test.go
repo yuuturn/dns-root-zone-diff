@@ -12,8 +12,8 @@ func TestDefault(t *testing.T) {
 	if cfg.ZoneURL != "https://www.internic.net/domain/root.zone" {
 		t.Errorf("ZoneURL = %q, want internic URL", cfg.ZoneURL)
 	}
-	if cfg.FetchInterval != 6*time.Hour {
-		t.Errorf("FetchInterval = %v, want 6h", cfg.FetchInterval)
+	if cfg.FetchInterval != 2*time.Hour {
+		t.Errorf("FetchInterval = %v, want 2h", cfg.FetchInterval)
 	}
 	if cfg.DataDir != "./data" {
 		t.Errorf("DataDir = %q, want ./data", cfg.DataDir)

@@ -39,7 +39,7 @@ type TwitterConfig struct {
 func Default() Config {
 	return Config{
 		ZoneURL:       "https://www.internic.net/domain/root.zone",
-		FetchInterval: 6 * time.Hour,
+		FetchInterval: 2 * time.Hour,
 		DataDir:       "./data",
 	}
 }

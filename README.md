@@ -4,7 +4,7 @@ DNS root zone の変更を機械的に検知して通知するツール。
 
 ## 機能
 
-- https://www.internic.net/domain/root.zone から 6時間に一度ゾーン取得
+- https://www.internic.net/domain/root.zone から 2時間に一度ゾーン取得
 - 前回との差分を検出
 - 変更をカテゴリ別に整理（delegation / DNSSEC / other）
 - Slack Webhook へ通知
@@ -23,7 +23,7 @@ pre-commit install
 
 ```yaml
 zone_url: "https://www.internic.net/domain/root.zone"
-fetch_interval: "6h"
+fetch_interval: "2h"
 data_dir: "/var/lib/dns-root-diff"
 slack:
   enabled: false
