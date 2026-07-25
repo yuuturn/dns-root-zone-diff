@@ -138,3 +138,73 @@ func TestLoadNoFile(t *testing.T) {
 		t.Errorf("ZoneURL = %q, want default", cfg.ZoneURL)
 	}
 }
+
+func TestDefaultWeb(t *testing.T) {
+	cfg := Default()
+	if cfg.Web.Enabled {
+		t.Error("Web.Enabled = true, want false by default")
+	}
+	if cfg.Web.Listen != "127.0.0.1:8080" {
+		t.Errorf("Web.Listen = %q, want 127.0.0.1:8080", cfg.Web.Listen)
+	}
+}
+
+func TestLoadWebSection(t *testing.T) {
+	content := `
+web:
+  enabled: true
+  listen: "0.0.0.0:9090"
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Web.Enabled {
+		t.Error("Web.Enabled = false, want true")
+	}
+	if cfg.Web.Listen != "0.0.0.0:9090" {
+		t.Errorf("Web.Listen = %q", cfg.Web.Listen)
+	}
+}
+
+func TestLoadWebListenDefaulted(t *testing.T) {
+	content := `
+web:
+  enabled: true
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Web.Listen != "127.0.0.1:8080" {
+		t.Errorf("Web.Listen = %q, want defaulted 127.0.0.1:8080", cfg.Web.Listen)
+	}
+}
+
+func TestWebEnvOverride(t *testing.T) {
+	t.Setenv("DNS_ROOT_DIFF_WEB_ENABLED", "true")
+	t.Setenv("DNS_ROOT_DIFF_WEB_LISTEN", "127.0.0.1:3000")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Web.Enabled {
+		t.Error("Web.Enabled = false, want true from env")
+	}
+	if cfg.Web.Listen != "127.0.0.1:3000" {
+		t.Errorf("Web.Listen = %q", cfg.Web.Listen)
+	}
+}
