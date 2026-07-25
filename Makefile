@@ -1,4 +1,4 @@
-.PHONY: build build-linux test lint fmt vet ci clean deploy
+.PHONY: build build-linux test lint fmt vet secrets ci clean deploy
 
 BINARY := dns-root-diff
 VPS    := vps1.xsv.yfujii.net
@@ -21,7 +21,10 @@ fmt:
 vet:
 	go vet ./...
 
-ci: vet lint test build
+secrets:
+	gitleaks detect --source . --verbose
+
+ci: secrets vet lint test build
 
 clean:
 	rm -rf bin/
