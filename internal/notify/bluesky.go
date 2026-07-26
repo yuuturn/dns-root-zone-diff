@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yfujii/dns-root-diff/internal/config"
@@ -21,6 +22,7 @@ type BlueskyNotifier struct {
 	baseURL   string
 	did       string
 	accessJwt string
+	mu        sync.Mutex
 }
 
 // NewBlueskyNotifier は BlueskyNotifier を生成する。
@@ -70,17 +72,37 @@ func (n *BlueskyNotifier) Notify(ctx context.Context, changes []diff.Change) err
 
 	for i, text := range texts {
 		if err := n.postRecord(ctx, text); err != nil {
-			return fmt.Errorf("createRecord %d/%d: %w", i+1, len(texts), err)
+			if rerr := n.refreshSession(ctx); rerr != nil {
+				return fmt.Errorf("refresh session: %w", rerr)
+			}
+			if err := n.postRecord(ctx, text); err != nil {
+				return fmt.Errorf("createRecord %d/%d: %w", i+1, len(texts), err)
+			}
 		}
 	}
 
 	return nil
 }
 
+func (n *BlueskyNotifier) refreshSession(ctx context.Context) error {
+	n.mu.Lock()
+	n.did = ""
+	n.accessJwt = ""
+	n.mu.Unlock()
+	if err := n.ensureSession(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (n *BlueskyNotifier) ensureSession(ctx context.Context) error {
-	if n.did != "" {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.did != "" && n.accessJwt != "" {
 		return nil
 	}
+
 	payload := map[string]string{
 		"identifier": n.cfg.Handle,
 		"password":   n.cfg.AppPassword,
