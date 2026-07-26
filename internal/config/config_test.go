@@ -289,3 +289,65 @@ func TestWebEnvInvalidValueIgnored(t *testing.T) {
 		t.Error("Web.Enabled = true, want false (invalid env value ignored)")
 	}
 }
+
+func TestBlueskyConfigDefaults(t *testing.T) {
+	cfg := Default()
+	if cfg.Bluesky.Enabled {
+		t.Error("Bluesky.Enabled = true, want false by default")
+	}
+	if cfg.Bluesky.APIURL != "https://bsky.social/xrpc" {
+		t.Errorf("Bluesky.APIURL = %q, want https://bsky.social/xrpc", cfg.Bluesky.APIURL)
+	}
+	if cfg.Bluesky.MaxPostChars != 300 {
+		t.Errorf("Bluesky.MaxPostChars = %d, want 300", cfg.Bluesky.MaxPostChars)
+	}
+}
+
+func TestBlueskyEnvOverride(t *testing.T) {
+	t.Setenv("BLUESKY_HANDLE", "user.bsky.social")
+	t.Setenv("BLUESKY_APP_PASSWORD", "app-pass")
+	t.Setenv("BLUESKY_API_URL", "https://custom.bsky.social/xrpc")
+	t.Setenv("BLUESKY_ENABLED", "true")
+	t.Setenv("BLUESKY_MAX_POST_CHARS", "500")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Bluesky.Enabled {
+		t.Error("Bluesky.Enabled = false, want true from env")
+	}
+	if cfg.Bluesky.Handle != "user.bsky.social" {
+		t.Errorf("Bluesky.Handle = %q, want user.bsky.social", cfg.Bluesky.Handle)
+	}
+	if cfg.Bluesky.AppPassword != "app-pass" {
+		t.Errorf("Bluesky.AppPassword = %q, want app-pass", cfg.Bluesky.AppPassword)
+	}
+	if cfg.Bluesky.APIURL != "https://custom.bsky.social/xrpc" {
+		t.Errorf("Bluesky.APIURL = %q, want custom URL", cfg.Bluesky.APIURL)
+	}
+	if cfg.Bluesky.MaxPostChars != 500 {
+		t.Errorf("Bluesky.MaxPostChars = %d, want 500", cfg.Bluesky.MaxPostChars)
+	}
+}
+
+func TestBlueskyAutoEnable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+bluesky:
+  handle: "dnsrootzonediff.bsky.social"
+  app_password: "secret"
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Bluesky.Enabled {
+		t.Error("Bluesky.Enabled = false, want true when handle+password set")
+	}
+}

@@ -130,6 +130,9 @@ func buildNotifiers(cfg config.Config, configPath string) []notify.Notifier {
 			notifiers = append(notifiers, tw)
 		}
 	}
+	if cfg.Bluesky.Enabled && cfg.Bluesky.Handle != "" && cfg.Bluesky.AppPassword != "" {
+		notifiers = append(notifiers, notify.NewBlueskyNotifier(cfg.Bluesky))
+	}
 	return notifiers
 }
 
