@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -168,5 +169,68 @@ func TestBlueskyDefaults(t *testing.T) {
 	n := NewBlueskyNotifier(config.BlueskyConfig{})
 	if n == nil {
 		t.Fatal("NewBlueskyNotifier() returned nil")
+	}
+}
+
+func TestBlueskyRefreshesSessionOnCreateRecordUnauthorized(t *testing.T) {
+	var sessionCalls int
+	var createRecordCalls int
+	var authHeaders []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+
+		if r.URL.Path == "/xrpc/com.atproto.server.createSession" {
+			sessionCalls++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"did":"did:plc:123","accessJwt":"jwt-` + strconv.Itoa(sessionCalls) + `","refreshJwt":"rjwt","handle":"user.bsky.social"}`))
+			return
+		}
+
+		if r.URL.Path == "/xrpc/com.atproto.repo.createRecord" {
+			createRecordCalls++
+			authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+			if createRecordCalls == 1 {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"message":"Unauthorized"}`))
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"uri":"at://did:plc:123/app.bsky.feed.post/` + strconv.Itoa(createRecordCalls) + `","cid":"bafy"}`))
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	n := NewBlueskyNotifier(config.BlueskyConfig{
+		Handle:       "user.bsky.social",
+		AppPassword:  "app-pass",
+		APIURL:       srv.URL + "/xrpc",
+		MaxPostChars: 300,
+	})
+	n.client = &http.Client{Timeout: 5 * time.Second}
+
+	changes := []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "test.", Type: "NS", NewRData: "ns1.test."},
+	}
+
+	if err := n.Notify(context.Background(), changes); err != nil {
+		t.Fatalf("Notify() error = %v", err)
+	}
+	if sessionCalls != 2 {
+		t.Fatalf("createSession calls = %d, want 2", sessionCalls)
+	}
+	if createRecordCalls != 2 {
+		t.Fatalf("createRecord calls = %d, want 2", createRecordCalls)
+	}
+	if len(authHeaders) != 2 {
+		t.Fatalf("auth headers = %v, want 2 entries", authHeaders)
+	}
+	if authHeaders[0] != "Bearer jwt-1" {
+		t.Errorf("first auth header = %q, want Bearer jwt-1", authHeaders[0])
+	}
+	if authHeaders[1] != "Bearer jwt-2" {
+		t.Errorf("second auth header = %q, want Bearer jwt-2", authHeaders[1])
 	}
 }
