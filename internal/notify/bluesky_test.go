@@ -15,8 +15,9 @@ import (
 )
 
 func TestBlueskyNotifySuccess(t *testing.T) {
-	var postCalls int
-	var createRecordPayload map[string]string
+	var authHeader string
+	var createRecordReq *http.Request
+	var createRecordBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 
@@ -27,8 +28,9 @@ func TestBlueskyNotifySuccess(t *testing.T) {
 		}
 
 		if r.URL.Path == "/xrpc/com.atproto.repo.createRecord" {
-			postCalls++
-			_ = json.Unmarshal(body, &createRecordPayload)
+			authHeader = r.Header.Get("Authorization")
+			createRecordReq = r
+			createRecordBody = body
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"uri":"at://did:plc:123/app.bsky.feed.post/abc","cid":"bafy"}`))
 			return
@@ -52,20 +54,36 @@ func TestBlueskyNotifySuccess(t *testing.T) {
 	if err := n.Notify(context.Background(), changes); err != nil {
 		t.Fatalf("Notify() error = %v", err)
 	}
-	if postCalls != 1 {
-		t.Fatalf("createRecord calls = %d, want 1", postCalls)
+	if createRecordReq == nil {
+		t.Fatal("createRecord was not called")
 	}
-	if createRecordPayload == nil || createRecordPayload["repo"] != "did:plc:123" {
-		t.Errorf("repo = %q, want did:plc:123", createRecordPayload)
+	if authHeader != "Bearer jwt" {
+		t.Errorf("Authorization = %q, want Bearer jwt", authHeader)
 	}
-	recordJSON := createRecordPayload["record"]
-	var record map[string]interface{}
-	if err := json.Unmarshal([]byte(recordJSON), &record); err != nil {
-		t.Fatalf("decode record json: %v", err)
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(createRecordBody, &payload); err != nil {
+		t.Fatalf("decode createRecord payload: %v", err)
+	}
+	if payload["repo"] != "did:plc:123" {
+		t.Errorf("repo = %v, want did:plc:123", payload["repo"])
+	}
+	if payload["collection"] != "app.bsky.feed.post" {
+		t.Errorf("collection = %v, want app.bsky.feed.post", payload["collection"])
+	}
+	record, ok := payload["record"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("record type = %T, want object", payload["record"])
+	}
+	if record["$type"] != "app.bsky.feed.post" {
+		t.Errorf("record.$type = %v, want app.bsky.feed.post", record["$type"])
 	}
 	text, ok := record["text"].(string)
 	if !ok || text == "" {
 		t.Errorf("record.text = %q, want non-empty", text)
+	}
+	if _, ok := record["createdAt"].(string); !ok {
+		t.Error("record.createdAt should be a string")
 	}
 }
 
@@ -108,8 +126,13 @@ func TestBlueskyNotifyHTTPError(t *testing.T) {
 			return
 		}
 
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"message":"boom"}`))
+		if r.URL.Path == "/xrpc/com.atproto.repo.createRecord" {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"message":"boom"}`))
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 

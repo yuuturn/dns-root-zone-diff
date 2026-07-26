@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,10 +16,11 @@ import (
 
 // BlueskyNotifier は BlueSky (AT Protocol) に通知を投稿する。
 type BlueskyNotifier struct {
-	cfg     config.BlueskyConfig
-	client  *http.Client
-	baseURL string
-	did     string
+	cfg       config.BlueskyConfig
+	client    *http.Client
+	baseURL   string
+	did       string
+	accessJwt string
 }
 
 // NewBlueskyNotifier は BlueskyNotifier を生成する。
@@ -106,7 +108,8 @@ func (n *BlueskyNotifier) ensureSession(ctx context.Context) error {
 	}
 
 	var session struct {
-		DID string `json:"did"`
+		DID       string `json:"did"`
+		AccessJwt string `json:"accessJwt"`
 	}
 	if err := json.Unmarshal(respBody, &session); err != nil {
 		return fmt.Errorf("decode session response: %w", err)
@@ -115,37 +118,35 @@ func (n *BlueskyNotifier) ensureSession(ctx context.Context) error {
 		return fmt.Errorf("createSession response missing did")
 	}
 	n.did = session.DID
+	n.accessJwt = session.AccessJwt
 	return nil
 }
 
 func (n *BlueskyNotifier) postRecord(ctx context.Context, text string) error {
 	record := map[string]interface{}{
-		"$type": "app.bsky.feed.post",
-		"text":  text,
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	record["createdAt"] = now
-
-	recordBytes, err := json.Marshal(record)
-	if err != nil {
-		return fmt.Errorf("marshal record: %w", err)
+		"$type":     "app.bsky.feed.post",
+		"text":      text,
+		"createdAt": time.Now().UTC().Format(time.RFC3339),
 	}
 
-	payload := map[string]string{
+	payload := map[string]interface{}{
 		"repo":       n.did,
 		"collection": "app.bsky.feed.post",
-		"record":     string(recordBytes),
+		"record":     record,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal createRecord payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.baseURL+"/com.atproto.repo.createRecord", strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.baseURL+"/com.atproto.repo.createRecord", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create record request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if n.accessJwt != "" {
+		req.Header.Set("Authorization", "Bearer "+n.accessJwt)
+	}
 
 	resp, err := n.client.Do(req)
 	if err != nil {

@@ -43,3 +43,6 @@ config.yaml
 
 # Frontend
 web/frontend/node_modules/
+
+# Hermes local workspace files
+.hermes/
