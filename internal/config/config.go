@@ -12,6 +12,9 @@ import (
 // defaultTwitterMaxPosts は1回の検知で連投する最大ツイート数のデフォルト。
 const defaultTwitterMaxPosts = 4
 
+// defaultBlueskyMaxPostChars は BlueSky 投稿の最大文字数デフォルト。
+const defaultBlueskyMaxPostChars = 300
+
 // Config はアプリケーション全体の設定。
 type Config struct {
 	ZoneURL       string        `yaml:"zone_url"`
@@ -19,7 +22,17 @@ type Config struct {
 	DataDir       string        `yaml:"data_dir"`
 	Slack         SlackConfig   `yaml:"slack"`
 	Twitter       TwitterConfig `yaml:"twitter"`
+	Bluesky       BlueskyConfig `yaml:"bluesky"`
 	Web           WebConfig     `yaml:"web"`
+}
+
+// BlueskyConfig は BlueSky 通知の設定。
+type BlueskyConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	Handle       string `yaml:"handle"`
+	AppPassword  string `yaml:"app_password"`
+	APIURL       string `yaml:"api_url"`
+	MaxPostChars int    `yaml:"max_post_chars"`
 }
 
 // WebConfig は diff 閲覧用 Web サーバーの設定。
@@ -56,6 +69,10 @@ func Default() Config {
 		DataDir:       "./data",
 		Twitter: TwitterConfig{
 			MaxPosts: defaultTwitterMaxPosts,
+		},
+		Bluesky: BlueskyConfig{
+			APIURL:       "https://bsky.social/xrpc",
+			MaxPostChars: defaultBlueskyMaxPostChars,
 		},
 		Web: WebConfig{
 			Enabled: false,
@@ -166,6 +183,28 @@ func applyEnv(cfg *Config) {
 	}
 	if (cfg.Twitter.APIKey != "" && cfg.Twitter.AccessToken != "") || cfg.Twitter.OAuth2AccessToken != "" {
 		cfg.Twitter.Enabled = true
+	}
+	if v := os.Getenv("BLUESKY_HANDLE"); v != "" {
+		cfg.Bluesky.Handle = v
+	}
+	if v := os.Getenv("BLUESKY_APP_PASSWORD"); v != "" {
+		cfg.Bluesky.AppPassword = v
+	}
+	if v := os.Getenv("BLUESKY_API_URL"); v != "" {
+		cfg.Bluesky.APIURL = v
+	}
+	if v := os.Getenv("BLUESKY_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Bluesky.Enabled = b
+		}
+	}
+	if v := os.Getenv("BLUESKY_MAX_POST_CHARS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Bluesky.MaxPostChars = n
+		}
+	}
+	if cfg.Bluesky.Handle != "" && cfg.Bluesky.AppPassword != "" {
+		cfg.Bluesky.Enabled = true
 	}
 	if v := os.Getenv("DNS_ROOT_DIFF_WEB_ENABLED"); v != "" {
 		// 有効化・無効化の両方向に上書きできるよう真偽値として解析する。

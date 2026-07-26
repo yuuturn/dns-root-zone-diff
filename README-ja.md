@@ -11,11 +11,13 @@ DNS root zone の変更を機械的に検知して通知するツール。
 - 変更をカテゴリ別に整理（delegation / DNSSEC / glue / signature / zone / other）
 - 再署名ノイズを除いた実質的な変更をサマリーにして Slack Webhook へ通知
 - 同じサマリーを X (Twitter) API v2 へ 280文字ごとに分割して連投
+- 同じサマリーを BlueSky (AT Protocol) へ 300文字ごとに分割して投稿
 - diff 履歴を Web UI で閲覧 (Cloudflare [kumo](https://github.com/cloudflare/kumo) 製)
 
 ## 運用中
 
 - X (Twitter): [@dnsrootzonediff](https://x.com/dnsrootzonediff) — 実際の変更通知
+- BlueSky: [@dnsrootzonediff.bsky.social](https://bsky.app/profile/dnsrootzonediff.bsky.social) — 実際の変更通知
 - diff まとめページ (Web UI): <https://dns-root-zone-diff.yfujii.net/>
 
 ## ローカルインストール
@@ -47,6 +49,12 @@ twitter:
 web:
   enabled: false
   listen: "127.0.0.1:8080"
+bluesky:
+  enabled: false
+  handle: ""
+  app_password: ""
+  api_url: "https://bsky.social/xrpc"
+  max_post_chars: 300
 ```
 
 環境変数で上書き可能:
@@ -62,6 +70,10 @@ web:
 - `TWITTER_MAX_POSTS`
 - `DNS_ROOT_DIFF_WEB_ENABLED`
 - `DNS_ROOT_DIFF_WEB_LISTEN`
+- `BLUESKY_HANDLE`
+- `BLUESKY_APP_PASSWORD`
+- `BLUESKY_API_URL`
+- `BLUESKY_MAX_POST_CHARS`
 
 ## 変更のカテゴリと通知の内容
 
