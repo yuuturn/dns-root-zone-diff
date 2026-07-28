@@ -147,16 +147,12 @@ func (n *BlueskyNotifier) ensureSession(ctx context.Context) error {
 }
 
 func (n *BlueskyNotifier) postRecord(ctx context.Context, text string) error {
-	// createdAt はサブ秒精度で厳密に増加する値にする。
-	// time.RFC3339 (秒精度) のままだと、短い間隔で複数投稿した際に
-	// 同じ createdAt となり、BlueSky 側で重複として扱われて
-	// 先の投稿が落ちる (例: 分割投稿の (1/N)(2/N) が消える) ため。
-	n.mu.Lock()
 	// createdAt はミリ秒精度で厳密に増加する値にする。
-	// 生の time.Now() はナノ秒精度のため、短い間隔では now.After(last) が
-	// 真となってインクリメントされず、フォーマット後に同じ文字列になる
-	// (例: 分割投稿 (1/N)(2/N) が同値で BlueSky 側で重複落ち) ため、
-	// ミリ秒で切り捨てて比較・増加させる。
+	// BlueSky は同じ createdAt の投稿を重複として落とすことがあるため、
+	// 短い間隔で連続投稿しても重複しないよう、前回より必ず後の時刻を使う。
+	// 生の time.Now() はナノ秒精度のため、ミリ秒に Truncate してから比較し、
+	// 同値なら +1ms 進める。
+	n.mu.Lock()
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	last := n.lastCreatedAt.Truncate(time.Millisecond)
 	if !now.After(last) {
