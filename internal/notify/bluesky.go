@@ -23,6 +23,8 @@ type BlueskyNotifier struct {
 	did       string
 	accessJwt string
 	mu        sync.Mutex
+	// lastCreatedAt は投稿の createdAt を厳密に増加させるために保持する。
+	lastCreatedAt time.Time
 }
 
 // NewBlueskyNotifier は BlueskyNotifier を生成する。
@@ -145,10 +147,25 @@ func (n *BlueskyNotifier) ensureSession(ctx context.Context) error {
 }
 
 func (n *BlueskyNotifier) postRecord(ctx context.Context, text string) error {
+	// createdAt はミリ秒精度で厳密に増加する値にする。
+	// BlueSky は同じ createdAt の投稿を重複として落とすことがあるため、
+	// 短い間隔で連続投稿しても重複しないよう、前回より必ず後の時刻を使う。
+	// 生の time.Now() はナノ秒精度のため、ミリ秒に Truncate してから比較し、
+	// 同値なら +1ms 進める。
+	n.mu.Lock()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	last := n.lastCreatedAt.Truncate(time.Millisecond)
+	if !now.After(last) {
+		now = last.Add(time.Millisecond)
+	}
+	n.lastCreatedAt = now
+	n.mu.Unlock()
+	createdAt := now.Format("2006-01-02T15:04:05.000Z")
+
 	record := map[string]interface{}{
 		"$type":     "app.bsky.feed.post",
 		"text":      text,
-		"createdAt": time.Now().UTC().Format(time.RFC3339),
+		"createdAt": createdAt,
 	}
 
 	payload := map[string]interface{}{
@@ -177,7 +194,9 @@ func (n *BlueskyNotifier) postRecord(ctx context.Context, text string) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusCreated {
+	// AT Protocol の com.atproto.repo.createRecord は成功時に 200 OK を返す
+	// (Twitter の 201 Created とは異なる)。両方を成功とみなす。
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("createRecord returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
