@@ -23,6 +23,8 @@ type BlueskyNotifier struct {
 	did       string
 	accessJwt string
 	mu        sync.Mutex
+	// lastCreatedAt は投稿の createdAt を厳密に増加させるために保持する。
+	lastCreatedAt time.Time
 }
 
 // NewBlueskyNotifier は BlueskyNotifier を生成する。
@@ -145,10 +147,29 @@ func (n *BlueskyNotifier) ensureSession(ctx context.Context) error {
 }
 
 func (n *BlueskyNotifier) postRecord(ctx context.Context, text string) error {
+	// createdAt はサブ秒精度で厳密に増加する値にする。
+	// time.RFC3339 (秒精度) のままだと、短い間隔で複数投稿した際に
+	// 同じ createdAt となり、BlueSky 側で重複として扱われて
+	// 先の投稿が落ちる (例: 分割投稿の (1/N)(2/N) が消える) ため。
+	n.mu.Lock()
+	// createdAt はミリ秒精度で厳密に増加する値にする。
+	// 生の time.Now() はナノ秒精度のため、短い間隔では now.After(last) が
+	// 真となってインクリメントされず、フォーマット後に同じ文字列になる
+	// (例: 分割投稿 (1/N)(2/N) が同値で BlueSky 側で重複落ち) ため、
+	// ミリ秒で切り捨てて比較・増加させる。
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	last := n.lastCreatedAt.Truncate(time.Millisecond)
+	if !now.After(last) {
+		now = last.Add(time.Millisecond)
+	}
+	n.lastCreatedAt = now
+	n.mu.Unlock()
+	createdAt := now.Format("2006-01-02T15:04:05.000Z")
+
 	record := map[string]interface{}{
 		"$type":     "app.bsky.feed.post",
 		"text":      text,
-		"createdAt": time.Now().UTC().Format(time.RFC3339),
+		"createdAt": createdAt,
 	}
 
 	payload := map[string]interface{}{

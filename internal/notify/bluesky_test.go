@@ -135,6 +135,71 @@ func TestBlueskyPostsAllPartsOnStatusOK(t *testing.T) {
 	}
 }
 
+// TestBlueskyCreatedAtMonotonic は短い間隔で複数投稿した際に createdAt が
+// 重複しない (サブ秒精度で厳密に増加する) ことを検証する。
+// 過去のバグ: time.RFC3339 (秒精度) だと同秒の投稿が同じ createdAt となり、
+// BlueSky 側で重複として扱われて先の分割投稿 ((1/N)(2/N)) が消えていた。
+func TestBlueskyCreatedAtMonotonic(t *testing.T) {
+	var createdAts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/xrpc/com.atproto.server.createSession" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"did":"did:plc:123","accessJwt":"jwt","refreshJwt":"rjwt","handle":"user.bsky.social"}`))
+			return
+		}
+		if r.URL.Path == "/xrpc/com.atproto.repo.createRecord" {
+			body, _ := io.ReadAll(r.Body)
+			var p struct {
+				Record struct {
+					CreatedAt string `json:"createdAt"`
+				} `json:"record"`
+			}
+			if err := json.Unmarshal(body, &p); err == nil {
+				createdAts = append(createdAts, p.Record.CreatedAt)
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"uri":"at://did:plc:123/app.bsky.feed.post/abc","cid":"bafy"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	n := NewBlueskyNotifier(config.BlueskyConfig{
+		Handle:       "user.bsky.social",
+		AppPassword:  "app-pass",
+		APIURL:       srv.URL + "/xrpc",
+		MaxPostChars: 40, // 小さくして確実に複数パーツに分割
+	})
+
+	changes := []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "a.", Type: "NS", NewRData: "ns1.a."},
+		{Kind: diff.ChangeAdded, Name: "b.", Type: "NS", NewRData: "ns1.b."},
+		{Kind: diff.ChangeAdded, Name: "c.", Type: "NS", NewRData: "ns1.c."},
+		{Kind: diff.ChangeAdded, Name: "d.", Type: "NS", NewRData: "ns1.d."},
+	}
+
+	if err := n.Notify(context.Background(), changes); err != nil {
+		t.Fatalf("Notify() error = %v", err)
+	}
+	if len(createdAts) < 2 {
+		t.Fatalf("createdAt count = %d, want >= 2", len(createdAts))
+	}
+
+	// すべてサブ秒精度 (ミリ秒) を含むこと。
+	for i, ca := range createdAts {
+		if !strings.Contains(ca, ".") {
+			t.Errorf("createdAt[%d] = %q, want sub-second precision (e.g. ...Z)", i, ca)
+		}
+	}
+	// 厳密に増加すること。
+	for i := 1; i < len(createdAts); i++ {
+		if createdAts[i] <= createdAts[i-1] {
+			t.Errorf("createdAt not strictly increasing: %q then %q", createdAts[i-1], createdAts[i])
+		}
+	}
+}
+
 func TestBlueskySkipsResigningOnlyChanges(t *testing.T) {
 	postCalls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
