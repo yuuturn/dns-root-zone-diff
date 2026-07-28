@@ -32,7 +32,8 @@ func TestBlueskyNotifySuccess(t *testing.T) {
 			authHeader = r.Header.Get("Authorization")
 			createRecordReq = r
 			createRecordBody = body
-			w.WriteHeader(http.StatusCreated)
+			// AT Protocol の createRecord は成功時に 200 OK を返す。
+			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"uri":"at://did:plc:123/app.bsky.feed.post/abc","cid":"bafy"}`))
 			return
 		}
@@ -85,6 +86,52 @@ func TestBlueskyNotifySuccess(t *testing.T) {
 	}
 	if _, ok := record["createdAt"].(string); !ok {
 		t.Error("record.createdAt should be a string")
+	}
+}
+
+// TestBlueskyPostsAllPartsOnStatusOK は AT Protocol の createRecord が 200 OK を
+// 返す実運用の挙動を再現する。過去のバグでは 200 をエラーとみなし、1 パーツ目で
+// ループを抜けていた。ここでは複数パーツがすべて投稿されることを検証する。
+func TestBlueskyPostsAllPartsOnStatusOK(t *testing.T) {
+	var createRecordCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/xrpc/com.atproto.server.createSession" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"did":"did:plc:123","accessJwt":"jwt","refreshJwt":"rjwt","handle":"user.bsky.social"}`))
+			return
+		}
+		if r.URL.Path == "/xrpc/com.atproto.repo.createRecord" {
+			createRecordCalls++
+			// 実運用と同じく 200 OK で応答。
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"uri":"at://did:plc:123/app.bsky.feed.post/abc","cid":"bafy"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	n := NewBlueskyNotifier(config.BlueskyConfig{
+		Handle:       "user.bsky.social",
+		AppPassword:  "app-pass",
+		APIURL:       srv.URL + "/xrpc",
+		MaxPostChars: 60, // 小さくして複数パーツに分割させる
+	})
+
+	changes := []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "a.", Type: "NS", NewRData: "ns1.a."},
+		{Kind: diff.ChangeAdded, Name: "b.", Type: "NS", NewRData: "ns1.b."},
+		{Kind: diff.ChangeAdded, Name: "c.", Type: "NS", NewRData: "ns1.c."},
+	}
+
+	if err := n.Notify(context.Background(), changes); err != nil {
+		t.Fatalf("Notify() error = %v", err)
+	}
+	// 200 を成功とみなすため、複数パーツがすべて投稿されるはず。
+	// 過去のバグ (200 をエラー扱い) では 1 パーツ目でループを抜けて 1 回しか
+	// 投稿されなかった。ここでは複数回投稿されることを検証する。
+	if createRecordCalls < 2 {
+		t.Fatalf("createRecord calls = %d, want >= 2 (all parts posted on 200 OK)", createRecordCalls)
 	}
 }
 

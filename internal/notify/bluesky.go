@@ -177,7 +177,9 @@ func (n *BlueskyNotifier) postRecord(ctx context.Context, text string) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusCreated {
+	// AT Protocol の com.atproto.repo.createRecord は成功時に 200 OK を返す
+	// (Twitter の 201 Created とは異なる)。両方を成功とみなす。
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("createRecord returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
