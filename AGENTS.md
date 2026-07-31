@@ -23,15 +23,16 @@ https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2
 
 ## アーキテクチャ
 
-- `cmd/dns-root-diff/main.go`: エントリーポイント、定期実行ループ
-- `internal/fetcher`: HTTP で root zone 取得
+- `cmd/dns-root-diff/main.go`: エントリーポイント、定期実行ループ (zone + root anchors の2系統)
+- `internal/fetcher`: HTTP で root zone / root anchors 取得
 - `internal/zone`: zone ファイルパーサー
+- `internal/anchor`: root anchors (https://data.iana.org/root-anchors/root-anchors.xml) XML パーサー。各 KeyDigest を擬似 DS レコード (Name=キーID, RData=keytag alg digesttype digest [退役日]) に写像し、既存 diff エンジンで差分検出する
 - `internal/diff`: 新旧レコード差分検出 + カテゴリ分類
-- `internal/store`: ローカルディスクへのスナップショット保存 + diff 履歴の JSON 永続化 (`data_dir/diffs/`)
-- `internal/notify`: Notifier インターフェース、Slack Webhook、X API v2
-- `internal/config`: YAML 設定 + 環境変数オーバーライド
-- `internal/web`: diff 履歴閲覧の HTTP API + 静的配信 (フロントエンドを go:embed)
-- `web/frontend/`: Web UI (Vite + React + @cloudflare/kumo)。ビルド成果物は `internal/web/static/` にコミットする
+- `internal/store`: ローカルディスクへのスナップショット保存 (root.zone / root-anchors.xml) + diff 履歴の JSON 永続化 (`data_dir/diffs/` = zone、`data_dir/anchor-diffs/` = root anchors)
+- `internal/notify`: Notifier インターフェース (Notify=zone / NotifyAnchors=root anchors)、Slack Webhook、X API v2
+- `internal/config`: YAML 設定 + 環境変数オーバーライド (`anchor_url` は空なら root anchors 監視無効)
+- `internal/web`: diff 履歴閲覧の HTTP API (`/api/diffs` = zone、`/api/anchors/diffs` = root anchors) + 静的配信 (フロントエンドを go:embed)
+- `web/frontend/`: Web UI (Vite + React + @cloudflare/kumo)。Root Zone / Root Anchors のタブで履歴を分離表示。ビルド成果物は `internal/web/static/` にコミットする
 - `deploy/`: systemd unit、デプロイシェル、nginx リバースプロキシ設定例
 
 ## 実行方法

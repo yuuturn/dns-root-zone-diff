@@ -225,3 +225,35 @@ func TestHistoryListSkipsInvalidFiles(t *testing.T) {
 		t.Errorf("len(entries) = %d, want 1", len(entries))
 	}
 }
+
+func TestAnchorHistoryAppendListGet(t *testing.T) {
+	dir := t.TempDir()
+	h := NewAnchorHistory(dir)
+	e := NewEntry(time.Now().UTC(), "old-id", "0C05FDD6-422C-4910-8ED6-430ED15E11C2", []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "Kmyv6jo", Type: "DS", NewRData: "38696 8 2 683D"},
+	})
+	if err := h.Append(e); err != nil {
+		t.Fatalf("Append() error = %v (idPattern must allow dashes in serial)", err)
+	}
+	entries, err := h.List()
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("List() = %d entries, %v", len(entries), err)
+	}
+	got, err := h.Get(entries[0].ID)
+	if err != nil || got.ID != entries[0].ID {
+		t.Fatalf("Get() = %+v, %v", got, err)
+	}
+	// zone 履歴とは別ディレクトリであること
+	zoneH := NewHistory(dir)
+	if zs, _ := zoneH.List(); len(zs) != 0 {
+		t.Errorf("zone history should be empty, got %d", len(zs))
+	}
+}
+
+func TestAnchorHistoryRejectsBadID(t *testing.T) {
+	h := NewAnchorHistory(t.TempDir())
+	bad := NewEntry(time.Now().UTC(), "old", "id with spaces!!", nil)
+	if err := h.Append(bad); err == nil {
+		t.Error("Append() = nil error, want ErrInvalidID")
+	}
+}

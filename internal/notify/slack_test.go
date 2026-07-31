@@ -154,3 +154,29 @@ func TestSlackName(t *testing.T) {
 		t.Errorf("Name() = %q, want slack", n.Name())
 	}
 }
+
+func TestSlackNotifyAnchors(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]string
+		_ = json.Unmarshal(body, &payload)
+		got = payload["text"]
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	n := NewSlackNotifier(srv.URL)
+	err := n.NotifyAnchors(context.Background(), []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "Kmyv6jo", Type: "DS", NewRData: "38696 8 2 683D2D0A"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(got, "DNS Root Anchors changes") {
+		t.Errorf("text = %q, want anchor title", got)
+	}
+	if !strings.Contains(got, "Kmyv6jo") {
+		t.Errorf("text should include the key id:\n%s", got)
+	}
+}

@@ -64,3 +64,21 @@ func TestSaveCreatesDir(t *testing.T) {
 		t.Error("Exists() = false after Save with nested dir")
 	}
 }
+
+func TestAnchorStoreSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	s := NewAnchor(dir)
+	if s.Exists() {
+		t.Error("anchor store should not exist initially")
+	}
+	if err := s.Save([]byte("<TrustAnchor/>")); err != nil {
+		t.Fatal(err)
+	}
+	if !s.Exists() {
+		t.Error("anchor store should exist after save")
+	}
+	data, err := s.Load()
+	if err != nil || string(data) != "<TrustAnchor/>" {
+		t.Fatalf("Load() = %q, %v", data, err)
+	}
+}

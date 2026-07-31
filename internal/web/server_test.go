@@ -64,7 +64,11 @@ func testStatic() fs.FS {
 }
 
 func newTestServer(entries []store.Entry) *httptest.Server {
-	s := New(&mockHistory{entries: entries}, testStatic())
+	return newTestServerWithAnchors(entries, nil)
+}
+
+func newTestServerWithAnchors(entries, anchorEntries []store.Entry) *httptest.Server {
+	s := New(&mockHistory{entries: entries}, &mockHistory{entries: anchorEntries}, testStatic())
 	return httptest.NewServer(s.Handler())
 }
 
@@ -255,5 +259,67 @@ func TestAPIUnknownPathNotSPA(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("GET /api/nonexistent status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestListAnchorDiffs(t *testing.T) {
+	entries := testEntries(2)
+	srv := newTestServerWithAnchors(nil, entries)
+	defer srv.Close()
+
+	body := getJSON(t, srv.URL+"/api/anchors/diffs", http.StatusOK)
+	if body["total"].(float64) != 2 {
+		t.Errorf("total = %v, want 2", body["total"])
+	}
+	diffs := body["diffs"].([]any)
+	if len(diffs) != 2 {
+		t.Fatalf("len(diffs) = %d, want 2", len(diffs))
+	}
+	if _, ok := diffs[0].(map[string]any)["changes"]; ok {
+		t.Error("anchor list response should not include changes")
+	}
+}
+
+func TestGetAnchorDiff(t *testing.T) {
+	entries := testEntries(1)
+	srv := newTestServerWithAnchors(nil, entries)
+	defer srv.Close()
+
+	body := getJSON(t, srv.URL+"/api/anchors/diffs/"+entries[0].ID, http.StatusOK)
+	if body["id"] != entries[0].ID {
+		t.Errorf("id = %v", body["id"])
+	}
+	if _, ok := body["changes"]; !ok {
+		t.Error("detail response should include changes")
+	}
+}
+
+func TestGetAnchorDiffNotFound(t *testing.T) {
+	srv := newTestServerWithAnchors(nil, nil)
+	defer srv.Close()
+
+	getJSON(t, srv.URL+"/api/anchors/diffs/no-such-id", http.StatusNotFound)
+}
+
+func TestGetAnchorDiffInvalidID(t *testing.T) {
+	srv := newTestServerWithAnchors(nil, nil)
+	defer srv.Close()
+
+	getJSON(t, srv.URL+"/api/anchors/diffs/invalid%20id", http.StatusBadRequest)
+}
+
+func TestAnchorAndZoneListsAreSeparate(t *testing.T) {
+	zoneEntries := testEntries(3)
+	anchorEntries := testEntries(1)
+	srv := newTestServerWithAnchors(zoneEntries, anchorEntries)
+	defer srv.Close()
+
+	zoneBody := getJSON(t, srv.URL+"/api/diffs", http.StatusOK)
+	if zoneBody["total"].(float64) != 3 {
+		t.Errorf("zone total = %v, want 3", zoneBody["total"])
+	}
+	anchorBody := getJSON(t, srv.URL+"/api/anchors/diffs", http.StatusOK)
+	if anchorBody["total"].(float64) != 1 {
+		t.Errorf("anchor total = %v, want 1", anchorBody["total"])
 	}
 }

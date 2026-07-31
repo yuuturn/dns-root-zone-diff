@@ -28,13 +28,14 @@ type HistoryReader interface {
 
 // Server は diff 閲覧用の HTTP ハンドラ群を提供する。
 type Server struct {
-	history HistoryReader
-	static  fs.FS
+	history       HistoryReader // root zone の差分履歴
+	anchorHistory HistoryReader // root anchors の差分履歴
+	static        fs.FS
 }
 
 // New は Server を生成する。static はフロントエンドのビルド成果物。
-func New(history HistoryReader, static fs.FS) *Server {
-	return &Server{history: history, static: static}
+func New(history, anchorHistory HistoryReader, static fs.FS) *Server {
+	return &Server{history: history, anchorHistory: anchorHistory, static: static}
 }
 
 // Handler はルーティング済みの http.Handler を返す。
@@ -42,6 +43,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/diffs", s.handleListDiffs)
 	mux.HandleFunc("GET /api/diffs/{id}", s.handleGetDiff)
+	mux.HandleFunc("GET /api/anchors/diffs", s.handleListAnchorDiffs)
+	mux.HandleFunc("GET /api/anchors/diffs/{id}", s.handleGetAnchorDiff)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	// 未定義の API パスは SPA フォールバックさせず 404 を返す。
 	mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +71,15 @@ type listResponse struct {
 }
 
 func (s *Server) handleListDiffs(w http.ResponseWriter, r *http.Request) {
-	entries, err := s.history.List()
+	s.handleList(w, r, s.history)
+}
+
+func (s *Server) handleListAnchorDiffs(w http.ResponseWriter, r *http.Request) {
+	s.handleList(w, r, s.anchorHistory)
+}
+
+func (s *Server) handleList(w http.ResponseWriter, r *http.Request, history HistoryReader) {
+	entries, err := history.List()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list diffs")
 		return
@@ -112,7 +123,15 @@ func (s *Server) handleListDiffs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetDiff(w http.ResponseWriter, r *http.Request) {
-	entry, err := s.history.Get(r.PathValue("id"))
+	s.handleGet(w, r, s.history)
+}
+
+func (s *Server) handleGetAnchorDiff(w http.ResponseWriter, r *http.Request) {
+	s.handleGet(w, r, s.anchorHistory)
+}
+
+func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, history HistoryReader) {
+	entry, err := history.Get(r.PathValue("id"))
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrInvalidID):

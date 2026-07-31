@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yfujii/dns-root-diff/internal/anchor"
 	"github.com/yfujii/dns-root-diff/internal/config"
 	"github.com/yfujii/dns-root-diff/internal/diff"
 	"github.com/yfujii/dns-root-diff/internal/fetcher"
@@ -52,7 +53,7 @@ func runLoop(cfg config.Config, configPath string) error {
 	webErr := make(chan error, 1)
 	if cfg.Web.Enabled {
 		srv := &http.Server{
-			Handler: web.New(store.NewHistory(cfg.DataDir), web.StaticFS()).Handler(),
+			Handler: web.New(store.NewHistory(cfg.DataDir), store.NewAnchorHistory(cfg.DataDir), web.StaticFS()).Handler(),
 		}
 		// ポート競合や不正なアドレスを起動時に即検出できるよう bind は同期で行う。
 		ln, err := net.Listen("tcp", cfg.Web.Listen)
@@ -137,6 +138,13 @@ func buildNotifiers(cfg config.Config, configPath string) []notify.Notifier {
 }
 
 func runOnce(ctx context.Context, cfg config.Config, configPath string) error {
+	if err := runZoneOnce(ctx, cfg, configPath); err != nil {
+		return err
+	}
+	return runAnchorOnce(ctx, cfg, configPath)
+}
+
+func runZoneOnce(ctx context.Context, cfg config.Config, configPath string) error {
 	fmt.Printf("fetching zone from %s\n", cfg.ZoneURL)
 
 	f := fetcher.New(cfg.ZoneURL, 2*time.Minute)
@@ -203,6 +211,81 @@ func runOnce(ctx context.Context, cfg config.Config, configPath string) error {
 
 	if err := s.Save(data); err != nil {
 		return fmt.Errorf("save zone: %w", err)
+	}
+
+	return nil
+}
+
+// runAnchorOnce は root anchors (DNSSEC トラストアンカー) を取得し、差分があれば
+// 通知・履歴記録を行う。AnchorURL が空の場合は何もしない。
+//
+// zone と異なり、初回実行 (前回スナップショットなし) はベースラインとして
+// スナップショット保存のみ行い、通知も履歴記録も行わない。初回に全キーを
+// added として通知するのは公開アカウントへのノイズになるため。
+func runAnchorOnce(ctx context.Context, cfg config.Config, configPath string) error {
+	if cfg.AnchorURL == "" {
+		return nil
+	}
+	fmt.Printf("fetching root anchors from %s\n", cfg.AnchorURL)
+
+	f := fetcher.New(cfg.AnchorURL, 2*time.Minute)
+	data, err := f.Fetch(ctx)
+	if err != nil {
+		return fmt.Errorf("fetch root anchors: %w", err)
+	}
+
+	ta, err := anchor.Parse(data)
+	if err != nil {
+		return fmt.Errorf("parse root anchors: %w", err)
+	}
+	fmt.Printf("parsed %d key digests\n", len(ta.Digests))
+
+	s := store.NewAnchor(cfg.DataDir)
+	hadPrevious := s.Exists()
+
+	var oldTA anchor.TrustAnchors
+	if hadPrevious {
+		oldData, err := s.Load()
+		if err != nil {
+			return fmt.Errorf("load previous root anchors: %w", err)
+		}
+		oldTA, err = anchor.Parse(oldData)
+		if err != nil {
+			return fmt.Errorf("parse previous root anchors: %w", err)
+		}
+	}
+
+	changes := anchor.Diff(oldTA, ta)
+	diff.SortChanges(changes)
+	if len(changes) == 0 {
+		fmt.Println("no anchor changes detected")
+	} else {
+		fmt.Printf("detected %d anchor changes\n", len(changes))
+		if substantive := diff.Substantive(changes); len(substantive) == 0 {
+			fmt.Println("anchor changes are all mechanical; skipping notification")
+		} else if hadPrevious {
+			fmt.Printf("%d substantive anchor changes\n", len(substantive))
+			notifiers := buildNotifiers(cfg, configPath)
+			for _, n := range notifiers {
+				if err := n.NotifyAnchors(ctx, substantive); err != nil {
+					fmt.Fprintf(os.Stderr, "notify %s (anchors) failed: %v\n", n.Name(), err)
+				}
+			}
+		}
+		// 初回実行 (前回スナップショットなし) は全キーが added になるため履歴には残さない。
+		if hadPrevious {
+			oldSerial := anchor.Serial(oldTA)
+			newSerial := anchor.Serial(ta)
+			h := store.NewAnchorHistory(cfg.DataDir)
+			entry := store.NewEntry(time.Now().UTC(), oldSerial, newSerial, changes)
+			if err := h.Append(entry); err != nil {
+				fmt.Fprintf(os.Stderr, "record anchor history failed: %v\n", err)
+			}
+		}
+	}
+
+	if err := s.Save(data); err != nil {
+		return fmt.Errorf("save root anchors: %w", err)
 	}
 
 	return nil

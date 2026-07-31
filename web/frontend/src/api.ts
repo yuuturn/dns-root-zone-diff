@@ -59,6 +59,15 @@ export function fetchDiff(id: string): Promise<DiffEntry> {
   return getJSON(`/api/diffs/${encodeURIComponent(id)}`);
 }
 
+// root anchors の差分は zone と JSON 形状が同じ (serial フィールドに TrustAnchor id が入る)。
+export function fetchAnchorDiffs(page: number, perPage: number): Promise<DiffListResponse> {
+  return getJSON(`/api/anchors/diffs?page=${page}&per_page=${perPage}`);
+}
+
+export function fetchAnchorDiff(id: string): Promise<DiffEntry> {
+  return getJSON(`/api/anchors/diffs/${encodeURIComponent(id)}`);
+}
+
 export function formatDetectedAt(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;

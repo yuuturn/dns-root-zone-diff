@@ -2,7 +2,13 @@ import { Banner, Breadcrumbs, Empty, LayerCard, Loader, Table, Tabs, Text } from
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { fetchDiff, formatDetectedAt, type Change, type DiffEntry } from "../api.ts";
+import {
+  fetchAnchorDiff,
+  fetchDiff,
+  formatDetectedAt,
+  type Change,
+  type DiffEntry,
+} from "../api.ts";
 import { CategoryBadge, KindBadge, SummaryBadges } from "../components/badges.tsx";
 
 function ChangeTable({ changes }: { changes: Change[] }) {
@@ -89,18 +95,20 @@ function formatRData(ttl?: number, rdata?: string): string {
   return parts.join("  ") || "-";
 }
 
-export function DiffDetailPage() {
+export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "anchors" }) {
   const { id } = useParams<{ id: string }>();
   const [entry, setEntry] = useState<DiffEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState("all");
+  const isAnchors = variant === "anchors";
 
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
     setEntry(null);
     setError(null);
-    fetchDiff(id)
+    const fetch = isAnchors ? fetchAnchorDiff : fetchDiff;
+    fetch(id)
       .then((resp) => {
         if (!cancelled) setEntry(resp);
       })
@@ -110,13 +118,15 @@ export function DiffDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, isAnchors]);
 
   if (error) {
     return (
       <div className="stack">
         <Breadcrumbs>
-          <Breadcrumbs.Link href="/">Diffs</Breadcrumbs.Link>
+          <Breadcrumbs.Link href={isAnchors ? "/anchors" : "/"}>
+            {isAnchors ? "Anchors" : "Diffs"}
+          </Breadcrumbs.Link>
           <Breadcrumbs.Separator />
           <Breadcrumbs.Current>{id}</Breadcrumbs.Current>
         </Breadcrumbs>
@@ -145,7 +155,9 @@ export function DiffDetailPage() {
   return (
     <div className="stack">
       <Breadcrumbs>
-        <Breadcrumbs.Link href="/">Diffs</Breadcrumbs.Link>
+        <Breadcrumbs.Link href={isAnchors ? "/anchors" : "/"}>
+          {isAnchors ? "Anchors" : "Diffs"}
+        </Breadcrumbs.Link>
         <Breadcrumbs.Separator />
         <Breadcrumbs.Current>{entry.new_serial}</Breadcrumbs.Current>
       </Breadcrumbs>
@@ -159,13 +171,13 @@ export function DiffDetailPage() {
           <div className="meta-grid">
             <div>
               <Text variant="secondary" size="sm">
-                Previous serial
+                {isAnchors ? "Previous anchor id" : "Previous serial"}
               </Text>
               <Text variant="mono">{entry.old_serial || "-"}</Text>
             </div>
             <div>
               <Text variant="secondary" size="sm">
-                New serial
+                {isAnchors ? "New anchor id" : "New serial"}
               </Text>
               <Text variant="mono">{entry.new_serial}</Text>
             </div>

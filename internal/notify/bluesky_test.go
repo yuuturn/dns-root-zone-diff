@@ -346,3 +346,50 @@ func TestBlueskyRefreshesSessionOnCreateRecordUnauthorized(t *testing.T) {
 		t.Errorf("second auth header = %q, want Bearer jwt-2", authHeaders[1])
 	}
 }
+
+func TestBlueskyNotifyAnchors(t *testing.T) {
+	var createRecordBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if r.URL.Path == "/xrpc/com.atproto.server.createSession" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"did":"did:plc:123","accessJwt":"jwt"}`))
+			return
+		}
+		if r.URL.Path == "/xrpc/com.atproto.repo.createRecord" {
+			createRecordBody = body
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"uri":"at://did:plc:123/app.bsky.feed.post/abc","cid":"bafy"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	n := NewBlueskyNotifier(config.BlueskyConfig{
+		Handle:       "user.bsky.social",
+		AppPassword:  "app-pass",
+		APIURL:       srv.URL + "/xrpc",
+		MaxPostChars: 300,
+	})
+	err := n.NotifyAnchors(context.Background(), []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "Kmyv6jo", Type: "DS", NewRData: "38696 8 2 683D2D0A"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Record struct {
+			Text string `json:"text"`
+		} `json:"record"`
+	}
+	if err := json.Unmarshal(createRecordBody, &payload); err != nil {
+		t.Fatalf("decode createRecord body: %v", err)
+	}
+	if !strings.HasPrefix(payload.Record.Text, "DNS Root Anchors changes") {
+		t.Errorf("text = %q, want anchor title", payload.Record.Text)
+	}
+	if !strings.Contains(payload.Record.Text, "Kmyv6jo") {
+		t.Errorf("text should include the key id:\n%s", payload.Record.Text)
+	}
+}

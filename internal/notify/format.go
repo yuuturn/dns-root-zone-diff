@@ -14,6 +14,11 @@ import (
 const (
 	// postTitle は各パーツの先頭行。連続投稿でも単体で文脈が分かるよう全パーツに付ける。
 	postTitle = "DNS Root Zone changes"
+	// anchorPostTitle は root anchors 変更投稿のタイトル。
+	anchorPostTitle = "DNS Root Anchors changes"
+	// anchorRDataMaxLen は anchors 投稿で DS ダイジェスト全体 (64文字) と退役日が
+	// 見えるようにする RDATA 上限。
+	anchorRDataMaxLen = 120
 	// rdataMaxLen はレコード単位の明細行に載せる RDATA の最大文字数。
 	rdataMaxLen = 40
 	// moreReserve は打ち切り時の "... +N more changes" 行のために予約する文字数。
@@ -34,6 +39,29 @@ type FormatOptions struct {
 	// X は大半の非 ASCII 文字を2文字分として数えるため、X 向けには必須。
 	// false の場合は rune 数で数える。
 	Weighted bool
+	// Title は各パーツ先頭行のタイトル。空なら "DNS Root Zone changes"。
+	// root anchors 通知では "DNS Root Anchors changes" を指定する。
+	Title string
+	// RDataMaxLen はレコード単位の明細行に載せる RDATA の最大文字数。0 なら 40。
+	// root anchors の DS ダイジェスト (64文字 + 退役日) は 40 では切れるため、
+	// anchors 通知では 120 を指定する。
+	RDataMaxLen int
+}
+
+// title はパーツ先頭行のタイトルを返す。
+func (o FormatOptions) title() string {
+	if o.Title != "" {
+		return o.Title
+	}
+	return postTitle
+}
+
+// rdataMaxLen は明細行の RDATA 上限を返す。
+func (o FormatOptions) rdataMaxLen() int {
+	if o.RDataMaxLen > 0 {
+		return o.RDataMaxLen
+	}
+	return rdataMaxLen
 }
 
 // measure は MaxLen と比較する長さの計算関数を返す。
@@ -182,7 +210,7 @@ func FormatPosts(changes []diff.Change, opts FormatOptions) []string {
 
 	overview := overviewBlock(changes, sub)
 
-	for _, detail := range [][]block{recordBlocks(sub), aggregatedBlocks(sub)} {
+	for _, detail := range [][]block{recordBlocks(sub, opts), aggregatedBlocks(sub, opts)} {
 		parts, dropped := pack(append([]block{overview}, detail...), opts, 0)
 		// 1件も落とさずに MaxParts に収まった候補だけを採用する。
 		if dropped == 0 && (opts.MaxParts <= 0 || len(parts) <= opts.MaxParts) {
@@ -191,8 +219,17 @@ func FormatPosts(changes []diff.Change, opts FormatOptions) []string {
 	}
 
 	// 集約でも収まらない場合は打ち切る。
-	parts, _ := pack(append([]block{overview}, aggregatedBlocks(sub)...), opts, opts.MaxParts)
+	parts, _ := pack(append([]block{overview}, aggregatedBlocks(sub, opts)...), opts, opts.MaxParts)
 	return parts
+}
+
+// anchorFormatOptions は root anchors 通知共通のフォーマットオプション。
+// zone 通知との違い: タイトルが anchors 用になり、DS ダイジェスト全体が
+// 見えるよう RDATA 上限が広がる。
+func anchorFormatOptions(base FormatOptions) FormatOptions {
+	base.Title = anchorPostTitle
+	base.RDataMaxLen = anchorRDataMaxLen
+	return base
 }
 
 // overviewBlock は先頭パーツに置く概要ブロックを組み立てる。
@@ -237,7 +274,7 @@ func soaSerials(changes []diff.Change) (oldSerial, newSerial string, ok bool) {
 }
 
 // recordBlocks はレコード単位の明細ブロックをカテゴリごとに組み立てる。
-func recordBlocks(sub []diff.Change) []block {
+func recordBlocks(sub []diff.Change, opts FormatOptions) []block {
 	grouped := diff.CategorizeChanges(sub)
 	var blocks []block
 	for _, cat := range diff.Categories() {
@@ -247,7 +284,7 @@ func recordBlocks(sub []diff.Change) []block {
 		}
 		lines := make([]detailLine, 0, len(catChanges))
 		for _, c := range catChanges {
-			lines = append(lines, detailLine{text: formatChange(c), count: 1})
+			lines = append(lines, detailLine{text: formatChange(c, opts.rdataMaxLen()), count: 1})
 		}
 		blocks = append(blocks, block{heading: heading(cat), lines: lines})
 	}
@@ -255,7 +292,7 @@ func recordBlocks(sub []diff.Change) []block {
 }
 
 // aggregatedBlocks は TLD ごとに集約した明細ブロックをカテゴリごとに組み立てる。
-func aggregatedBlocks(sub []diff.Change) []block {
+func aggregatedBlocks(sub []diff.Change, opts FormatOptions) []block {
 	grouped := diff.CategorizeChanges(sub)
 	var blocks []block
 	for _, cat := range diff.Categories() {
@@ -278,7 +315,8 @@ func heading(cat diff.Category) string {
 }
 
 // formatChange はレコード単位の明細行を組み立てる。
-func formatChange(c diff.Change) string {
+// rdataMaxLen は RDATA の表示上限 (truncate する文字数)。
+func formatChange(c diff.Change, rdataMaxLen int) string {
 	switch c.Kind {
 	case diff.ChangeAdded:
 		return fmt.Sprintf("  + %s %s %s", c.Name, c.Type, truncate(c.NewRData, rdataMaxLen))
@@ -328,14 +366,14 @@ func formatTLDGroup(g diff.TLDGroup) string {
 // maxParts > 0 の場合はパーツ数をそこで打ち切り、落とした変更件数を返す。
 func pack(blocks []block, opts FormatOptions, maxParts int) (parts []string, dropped int) {
 	measure := opts.measure()
-	packed, dropped := packOnce(blocks, opts.MaxLen, maxParts, measure)
+	packed, dropped := packOnce(blocks, opts.MaxLen, maxParts, measure, opts.title())
 
 	numbered := opts.Numbering && len(packed) > 1
 	if numbered {
 		// 番号の分だけ上限が減るため詰め直す。桁数が予約幅を超えたら予約を広げる (通常1周で確定)。
 		reserve := numberingReserve
 		for i := 0; i < 3; i++ {
-			packed, dropped = packOnce(blocks, opts.MaxLen-reserve, maxParts, measure)
+			packed, dropped = packOnce(blocks, opts.MaxLen-reserve, maxParts, measure, opts.title())
 			need := measure(fmt.Sprintf(" (%d/%d)", len(packed), len(packed)))
 			if need <= reserve {
 				break
@@ -356,19 +394,20 @@ func pack(blocks []block, opts FormatOptions, maxParts int) (parts []string, dro
 
 // packOnce は行を limit 文字以内のパーツに貪欲に詰める。
 // 長さは measure で数える (X は重み付き文字数、それ以外は rune 数)。
-func packOnce(blocks []block, limit, maxParts int, measure func(string) int) ([][]string, int) {
+// title は各パーツの先頭行 (番号付け時は " (i/n)" が追記される)。
+func packOnce(blocks []block, limit, maxParts int, measure func(string) int, title string) ([][]string, int) {
 	var packed [][]string
 	var packedLen []int // packed 各パーツの長さ (打ち切り行を追記できるか判定するため)
-	cur := []string{postTitle}
-	curLen := measure(postTitle)
+	cur := []string{title}
+	curLen := measure(title)
 	dropped := 0
 	full := false
 
 	flush := func() {
 		packed = append(packed, cur)
 		packedLen = append(packedLen, curLen)
-		cur = []string{postTitle}
-		curLen = measure(postTitle)
+		cur = []string{title}
+		curLen = measure(title)
 	}
 	// 最後に使えるパーツでは打ち切り行の分を予約する。
 	effLimit := func() int {
@@ -430,8 +469,8 @@ func packOnce(blocks []block, limit, maxParts int, measure func(string) int) ([]
 			packed[last] = append(packed[last], note)
 			packedLen[last] += 1 + measure(note)
 		} else {
-			packed = append(packed, []string{postTitle, note})
-			packedLen = append(packedLen, measure(postTitle)+1+measure(note))
+			packed = append(packed, []string{title, note})
+			packedLen = append(packedLen, measure(title)+1+measure(note))
 		}
 	}
 	return packed, dropped
