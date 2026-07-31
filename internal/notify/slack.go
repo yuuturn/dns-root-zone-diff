@@ -54,6 +54,21 @@ func (s *SlackNotifier) Notify(ctx context.Context, changes []diff.Change) error
 	return nil
 }
 
+// NotifyAnchors は root anchors の変更を Slack に通知する。
+func (s *SlackNotifier) NotifyAnchors(ctx context.Context, changes []diff.Change) error {
+	msgs := FormatPosts(changes, anchorFormatOptions(FormatOptions{
+		MaxLen:    slackMaxLen,
+		MaxParts:  slackMaxParts,
+		Numbering: true,
+	}))
+	for i, msg := range msgs {
+		if err := s.post(ctx, msg); err != nil {
+			return fmt.Errorf("slack anchor message %d/%d: %w", i+1, len(msgs), err)
+		}
+	}
+	return nil
+}
+
 func (s *SlackNotifier) post(ctx context.Context, msg string) error {
 	payload := map[string]string{"text": msg}
 	body, err := json.Marshal(payload)

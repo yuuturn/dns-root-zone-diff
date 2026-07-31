@@ -71,7 +71,38 @@ func (n *BlueskyNotifier) Notify(ctx context.Context, changes []diff.Change) err
 	if len(texts) == 0 {
 		return nil
 	}
+	return n.postRecords(ctx, texts)
+}
 
+// NotifyAnchors は root anchors の変更を BlueSky に投稿する。
+// 実質的な変更がない場合は何も投稿しない。
+func (n *BlueskyNotifier) NotifyAnchors(ctx context.Context, changes []diff.Change) error {
+	if len(changes) == 0 {
+		return nil
+	}
+
+	sub := diff.Substantive(changes)
+	if len(sub) == 0 {
+		return nil
+	}
+
+	if err := n.ensureSession(ctx); err != nil {
+		return fmt.Errorf("createSession: %w", err)
+	}
+
+	texts := FormatPosts(sub, anchorFormatOptions(FormatOptions{
+		MaxLen:    n.cfg.MaxPostChars,
+		Numbering: true,
+	}))
+	if len(texts) == 0 {
+		return nil
+	}
+	return n.postRecords(ctx, texts)
+}
+
+// postRecords は texts を順に投稿する。セッション失効時は refreshSession で
+// 再認証してから1回だけリトライする。
+func (n *BlueskyNotifier) postRecords(ctx context.Context, texts []string) error {
 	for i, text := range texts {
 		if err := n.postRecord(ctx, text); err != nil {
 			if rerr := n.refreshSession(ctx); rerr != nil {
@@ -82,7 +113,6 @@ func (n *BlueskyNotifier) Notify(ctx context.Context, changes []diff.Change) err
 			}
 		}
 	}
-
 	return nil
 }
 

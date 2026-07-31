@@ -14,6 +14,11 @@ import (
 const (
 	// postTitle は各パーツの先頭行。連続投稿でも単体で文脈が分かるよう全パーツに付ける。
 	postTitle = "DNS Root Zone changes"
+	// anchorPostTitle は root anchors 変更投稿のタイトル。
+	anchorPostTitle = "DNS Root Anchors changes"
+	// anchorRDataMaxLen は anchors 投稿で DS ダイジェスト全体 (64文字) と退役日が
+	// 見えるようにする RDATA 上限。
+	anchorRDataMaxLen = 120
 	// rdataMaxLen はレコード単位の明細行に載せる RDATA の最大文字数。
 	rdataMaxLen = 40
 	// moreReserve は打ち切り時の "... +N more changes" 行のために予約する文字数。
@@ -216,6 +221,15 @@ func FormatPosts(changes []diff.Change, opts FormatOptions) []string {
 	// 集約でも収まらない場合は打ち切る。
 	parts, _ := pack(append([]block{overview}, aggregatedBlocks(sub, opts)...), opts, opts.MaxParts)
 	return parts
+}
+
+// anchorFormatOptions は root anchors 通知共通のフォーマットオプション。
+// zone 通知との違い: タイトルが anchors 用になり、DS ダイジェスト全体が
+// 見えるよう RDATA 上限が広がる。
+func anchorFormatOptions(base FormatOptions) FormatOptions {
+	base.Title = anchorPostTitle
+	base.RDataMaxLen = anchorRDataMaxLen
+	return base
 }
 
 // overviewBlock は先頭パーツに置く概要ブロックを組み立てる。

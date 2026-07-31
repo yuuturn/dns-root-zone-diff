@@ -129,6 +129,30 @@ func (tw *TwitterNotifier) Notify(ctx context.Context, changes []diff.Change) er
 	return nil
 }
 
+// NotifyAnchors は root anchors の変更を X にツイートする。
+func (tw *TwitterNotifier) NotifyAnchors(ctx context.Context, changes []diff.Change) error {
+	posts := FormatPosts(changes, anchorFormatOptions(FormatOptions{
+		MaxLen:    tweetMaxLen,
+		MaxParts:  tw.maxPosts,
+		Numbering: true,
+		Weighted:  true,
+	}))
+
+	for i, msg := range posts {
+		if i > 0 && tw.postDelay > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(tw.postDelay):
+			}
+		}
+		if err := tw.postTweet(ctx, msg); err != nil {
+			return fmt.Errorf("post anchor tweet %d/%d: %w", i+1, len(posts), err)
+		}
+	}
+	return nil
+}
+
 func (tw *TwitterNotifier) postTweet(ctx context.Context, text string) error {
 	status, body, err := tw.doTweet(ctx, text)
 	if err != nil {

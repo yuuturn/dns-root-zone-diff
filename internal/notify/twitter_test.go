@@ -440,3 +440,30 @@ func TestTwitterOAuth2RefreshesOnUnauthorized(t *testing.T) {
 		t.Errorf("saved tokens = %q / %q", savedAccess, savedRefresh)
 	}
 }
+
+func TestTwitterNotifyAnchors(t *testing.T) {
+	var received map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &received)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"data":{"id":"123"}}`))
+	}))
+	defer srv.Close()
+
+	n := NewTwitterNotifier("key", "secret", "token", "tokensecret")
+	n.apiURL = srv.URL
+
+	err := n.NotifyAnchors(context.Background(), []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "Kmyv6jo", Type: "DS", NewRData: "38696 8 2 683D2D0A"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(received["text"], "DNS Root Anchors changes") {
+		t.Errorf("text = %q, want anchor title", received["text"])
+	}
+	if !strings.Contains(received["text"], "Kmyv6jo") {
+		t.Errorf("text should include the key id:\n%s", received["text"])
+	}
+}
