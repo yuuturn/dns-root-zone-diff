@@ -8,6 +8,8 @@ import (
 
 const zoneFileName = "root.zone"
 
+const anchorFileName = "root-anchors.xml"
+
 // Store はゾーンファイルをローカルディスクに永続化する。
 type Store struct {
 	dir  string
@@ -19,6 +21,14 @@ func New(dir string) *Store {
 	return &Store{
 		dir:  dir,
 		path: filepath.Join(dir, zoneFileName),
+	}
+}
+
+// NewAnchor は root anchors スナップショット用の Store を生成する。
+func NewAnchor(dir string) *Store {
+	return &Store{
+		dir:  dir,
+		path: filepath.Join(dir, anchorFileName),
 	}
 }
 

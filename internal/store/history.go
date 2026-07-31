@@ -16,12 +16,16 @@ import (
 
 const historyDirName = "diffs"
 
+const anchorHistoryDirName = "anchor-diffs"
+
 // ErrInvalidID は履歴エントリの ID が不正な場合に返される。
 var ErrInvalidID = errors.New("invalid history entry id")
 
-// idPattern は履歴エントリ ID の形式 (<UTC時刻compact>-<SOAシリアル>)。
-// ファイル名に使うため、パストラバーサルを防ぐ目的でも検証する。
-var idPattern = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9A-Za-z]+$`)
+// idPattern は履歴エントリ ID の形式 (<UTC時刻compact>-<serial相当>)。
+// serial 部分は SOA serial の数字のほか、root anchors の TrustAnchor id のように
+// ハイフンを含む文字列も許可する。ファイル名に使うため、パストラバーサルを防ぐ
+// 目的でも検証する。
+var idPattern = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9A-Za-z-]+$`)
 
 // Entry は1回の変更検知イベントを表す。
 type Entry struct {
@@ -115,6 +119,12 @@ type History struct {
 // NewHistory は dataDir 配下の diffs ディレクトリを使う History を生成する。
 func NewHistory(dataDir string) *History {
 	return &History{dir: filepath.Join(dataDir, historyDirName)}
+}
+
+// NewAnchorHistory は dataDir 配下の anchor-diffs ディレクトリを使う History を生成する。
+// root anchors の差分履歴は zone の差分履歴 (diffs/) とは別に保存する。
+func NewAnchorHistory(dataDir string) *History {
+	return &History{dir: filepath.Join(dataDir, anchorHistoryDirName)}
 }
 
 // Append はエントリを新しいファイルとして保存する。
