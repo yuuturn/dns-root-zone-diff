@@ -18,6 +18,7 @@ const defaultBlueskyMaxPostChars = 300
 // Config はアプリケーション全体の設定。
 type Config struct {
 	ZoneURL       string        `yaml:"zone_url"`
+	AnchorURL     string        `yaml:"anchor_url"`
 	FetchInterval time.Duration `yaml:"fetch_interval"`
 	DataDir       string        `yaml:"data_dir"`
 	Slack         SlackConfig   `yaml:"slack"`
@@ -65,6 +66,7 @@ type TwitterConfig struct {
 func Default() Config {
 	return Config{
 		ZoneURL:       "https://www.internic.net/domain/root.zone",
+		AnchorURL:     "https://data.iana.org/root-anchors/root-anchors.xml",
 		FetchInterval: 2 * time.Hour,
 		DataDir:       "./data",
 		Twitter: TwitterConfig{
@@ -139,6 +141,9 @@ func SaveOAuth2Tokens(path, accessToken, refreshToken string) error {
 func applyEnv(cfg *Config) {
 	if v := os.Getenv("DNS_ROOT_DIFF_ZONE_URL"); v != "" {
 		cfg.ZoneURL = v
+	}
+	if v := os.Getenv("DNS_ROOT_DIFF_ANCHOR_URL"); v != "" {
+		cfg.AnchorURL = v
 	}
 	if v := os.Getenv("DNS_ROOT_DIFF_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {

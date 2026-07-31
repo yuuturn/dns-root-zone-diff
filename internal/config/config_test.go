@@ -351,3 +351,39 @@ bluesky:
 		t.Error("Bluesky.Enabled = false, want true when handle+password set")
 	}
 }
+
+func TestDefaultAnchorURL(t *testing.T) {
+	cfg := Default()
+	if cfg.AnchorURL != "https://data.iana.org/root-anchors/root-anchors.xml" {
+		t.Errorf("AnchorURL = %q", cfg.AnchorURL)
+	}
+}
+
+func TestLoadAnchorURLEnv(t *testing.T) {
+	t.Setenv("DNS_ROOT_DIFF_ANCHOR_URL", "http://127.0.0.1:9999/anchors.xml")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AnchorURL != "http://127.0.0.1:9999/anchors.xml" {
+		t.Errorf("AnchorURL = %q", cfg.AnchorURL)
+	}
+}
+
+func TestLoadAnchorURLFromFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+anchor_url: "https://example.com/root-anchors.xml"
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.AnchorURL != "https://example.com/root-anchors.xml" {
+		t.Errorf("AnchorURL = %q", cfg.AnchorURL)
+	}
+}
