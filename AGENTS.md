@@ -2,7 +2,7 @@
 
 DNS root zone file change notification ツール。
 
-https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2時間に一度取得し、前回との差分を検出して、Slack または X (Twitter) に通知する。
+https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2時間に一度取得し、前回との差分を検出して、Slack、X (Twitter)、または BlueSky に通知する。
 
 ## コミュニケーション
 
@@ -13,6 +13,7 @@ https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2
 - 言語: Go
 - バージョン: 1.26.5
 - リモートリポジトリ: GitHub (https://github.com/yuuturn/dns-root-zone-diff)
+- Go module: `github.com/yfujii/dns-root-diff` (リポジトリ名 `dns-root-zone-diff` と異なるので注意)
 - デプロイ先: VPS (vps1.xsv.yfujii.net, Rocky Linux 10.2, x86_64, systemd 257)
 - デプロイ方式: macOS arm64 で GOOS=linux GOARCH=amd64 クロスコンパイル → scp → systemd
 - 開発手法: TDD (テスト駆動開発)
@@ -29,7 +30,7 @@ https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2
 - `internal/anchor`: root anchors (https://data.iana.org/root-anchors/root-anchors.xml) XML パーサー。各 KeyDigest を擬似 DS レコード (Name=キーID, RData=keytag alg digesttype digest [退役日]) に写像し、既存 diff エンジンで差分検出する
 - `internal/diff`: 新旧レコード差分検出 + カテゴリ分類
 - `internal/store`: ローカルディスクへのスナップショット保存 (root.zone / root-anchors.xml) + diff 履歴の JSON 永続化 (`data_dir/diffs/` = zone、`data_dir/anchor-diffs/` = root anchors)
-- `internal/notify`: Notifier インターフェース (Notify=zone / NotifyAnchors=root anchors)、Slack Webhook、X API v2
+- `internal/notify`: Notifier インターフェース (Notify=zone / NotifyAnchors=root anchors)、Slack Webhook、X API v2 (OAuth 2.0 ユーザートークン)、BlueSky (AT Protocol)
 - `internal/config`: YAML 設定 + 環境変数オーバーライド (`anchor_url` は空なら root anchors 監視無効)
 - `internal/web`: diff 履歴閲覧の HTTP API (`/api/diffs` = zone、`/api/anchors/diffs` = root anchors) + 静的配信 (フロントエンドを go:embed)
 - `web/frontend/`: Web UI (Vite + React + @cloudflare/kumo)。Root Zone / Root Anchors のタブで履歴を分離表示。ビルド成果物は `internal/web/static/` にコミットする
@@ -58,23 +59,30 @@ https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2
 make deploy
 ```
 
-VPS では事前に `/etc/dns-root-diff/config.yaml` を配置し、`dns-root-diff` ユーザーが読み取める必要がある。
+VPS では事前に `/etc/dns-root-diff/config.yaml` を配置し、`dns-root-diff` ユーザーが読み取れる必要がある。
+
+X 通知は OAuth 2.0 ユーザートークン方式で、アクセストークンは 2時間で失効する。refresh_token による自動更新を行い、更新後のトークンを `/etc/dns-root-diff/config.yaml` へ永続化するため、systemd unit には当該ディレクトリへの書き込み許可 (`ReadWritePaths`) が必要。
 
 ## ブランチ戦略
 
 - `main` への直接 commit は禁止
-- 機能ごとに feature ブランチを切る: `git checkout -b feat/xxx`
+- 変更種別ごとに `<type>/<説明>` のブランチを切る。type は `feat` / `fix` / `docs` / `refactor` / `style` / `test` / `chore` を使う (例: `feat/root-anchors`, `fix/oauth-refresh`, `docs/readme-update`)
+- commit メッセージも conventional commits 形式 (`feat:`, `fix:`, `docs:`, `refactor:`, `style:`, `test:`, `chore:`) を使う
 - PR を作成し、GitHub Actions CI (`ci`) が PASS することを必須とする
-- CI 通過後に main へ merge する
+- CI 通過後、merge はエージェントが行わず、ユーザーが PR をレビューして手動で merge する
 - main ブランチは branch protection rule で直接 push を防止
 
 ```bash
-# 作業例
+# 作業例 (feat)
 git checkout -b feat/update-notifier
 # ... 変更 ...
 git commit -m "feat: update notifier"
 git push -u origin feat/update-notifier
-# GitHub で PR 作成、CI 通過後に merge
+# GitHub で PR 作成、CI 通過後にユーザーがレビューして手動で merge
+
+# 他 type の例: docs 修正は docs/、バグ修正は fix/、リファクタは refactor/ でブランチを切る
+git checkout -b docs/readme-update
+git commit -m "docs: update README"
 ```
 
 ## 注意事項
@@ -85,3 +93,6 @@ git push -u origin feat/update-notifier
 - VPS では SELinux が有効な場合があるため、バイナリと systemd unit ファイルのラベルを `restorecon` で修正する。
 - Web UI を nginx で公開する場合、SELinux では `setsebool -P httpd_can_network_connect 1` が必要 (`deploy/nginx.conf.example` 参照)。
 - main への直接 push を防ぐため、GitHub の branch protection rule で "Require a pull request before merging" を有効化する。
+- 機能追加の PR では README.md / README-ja.md を同じ PR で更新する (更新漏れはレビューで指摘される)。
+- GitHub Releases のタイトル・ノートは英語で作成する。
+- 外部連携 (Slack / X / BlueSky などの notifier) の修正は、単体テストが通るだけでなく実サービスへの投稿で動作確認する。
