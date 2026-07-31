@@ -7,12 +7,13 @@ A tool that mechanically detects changes to the DNS root zone file and sends not
 ## Features
 
 - Fetches the root zone from https://www.internic.net/domain/root.zone every 2 hours
+- Fetches the DNSSEC trust anchors (root anchors) from https://data.iana.org/root-anchors/root-anchors.xml at the same interval
 - Detects differences from the previous snapshot
 - Categorizes changes (delegation / DNSSEC / glue / signature / zone / other)
 - Summarizes substantive changes (excluding re-signing noise) and notifies via Slack Webhook
 - Posts the same summary to X (Twitter) API v2, split into chunks of 280 characters
 - Posts the same summary to BlueSky via AT Protocol, split into 300-character posts
-- Browses diff history through a Web UI (built with Cloudflare [kumo](https://github.com/cloudflare/kumo))
+- Browses diff history through a Web UI (built with Cloudflare [kumo](https://github.com/cloudflare/kumo)), separated into Root Zone and Root Anchors tabs
 
 ## Live
 
@@ -33,6 +34,8 @@ Create a `config.yaml` file:
 
 ```yaml
 zone_url: "https://www.internic.net/domain/root.zone"
+# Source of the DNSSEC trust anchors (root anchors). Leave empty to disable root anchors monitoring (defaults to IANA)
+anchor_url: "https://data.iana.org/root-anchors/root-anchors.xml"
 fetch_interval: "2h"
 data_dir: "/var/lib/dns-root-diff"
 slack:
@@ -60,6 +63,7 @@ bluesky:
 Overridable via environment variables:
 
 - `DNS_ROOT_DIFF_ZONE_URL`
+- `DNS_ROOT_DIFF_ANCHOR_URL`
 - `DNS_ROOT_DIFF_INTERVAL`
 - `DNS_ROOT_DIFF_DATA_DIR`
 - `SLACK_WEBHOOK_URL`
@@ -125,6 +129,25 @@ re-signing: 2800 RRSIG (omitted)
 
 The breakdown is listed per record. When it does not fit within the limit (`max_posts`), it switches to per-TLD aggregation (`  example. NS +1 -1`), and if it still does not fit, the dropped count is shown explicitly at the end as `... +N more changes`.
 
+## Root Anchors (DNSSEC Trust Anchors) Monitoring
+
+Like the root zone, the IANA root anchors file (https://data.iana.org/root-anchors/root-anchors.xml) is fetched at the same interval (`fetch_interval`) and compared against the previous snapshot.
+
+- Each `<KeyDigest>` is treated as the equivalent of a DS record: **key additions** (`+`), **removals** (`-`), and **retirements** (`~`, when a `validUntil` attribute is added) are detected. The retirement date is shown as `YYYY-MM-DD` at the end of the RData on the detail line
+- The first run only saves a baseline snapshot; no notification or history is recorded
+- Diff history is stored separately from the zone in `data_dir/anchor-diffs/` and is browsable in the Root Anchors tab of the Web UI
+- Notifications use the title `DNS Root Anchors changes` and widen the RDATA limit on detail lines so the 64-character DS digests are not truncated
+
+```text
+DNS Root Anchors changes
+DNSSEC 2
+
+[DNSSEC]
+  + Kmyv6jo DS 38696 8 2 683D2D0ACB8C9B712A1948B27F741219298D0A450D612C483AF444A4C0FB2B16
+  ~ Kjqmt7v DS 19036 8 2 49AAC11D7B6F6446702E54A1607371607A1A41855200FD2CE1CDDE32F24E8FB5
+    -> 19036 8 2 49AAC11D7B6F6446702E54A1607371607A1A41855200FD2CE1CDDE32F24E8FB5 2019-01-11
+```
+
 ## Usage
 
 ```bash
@@ -138,11 +161,13 @@ make build
 
 ## Web UI
 
-Setting `web.enabled: true` starts a web server that lets you browse diff history in scheduled mode (`-once` does not start it). History is saved as JSON to `data_dir/diffs/` on each detection.
+Setting `web.enabled: true` starts a web server that lets you browse diff history in scheduled mode (`-once` does not start it). History is saved as JSON on each detection (zone in `data_dir/diffs/`, root anchors in `data_dir/anchor-diffs/`).
 
-- `GET /` : list and detail views (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))
-- `GET /api/diffs?page=1&per_page=20` : diff history list
-- `GET /api/diffs/{id}` : diff detail
+- `GET /` : list and detail views (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo)), switchable via the Root Zone / Root Anchors tabs
+- `GET /api/diffs?page=1&per_page=20` : root zone diff history list
+- `GET /api/diffs/{id}` : root zone diff detail
+- `GET /api/anchors/diffs?page=1&per_page=20` : root anchors diff history list
+- `GET /api/anchors/diffs/{id}` : root anchors diff detail
 - `GET /api/health` : health check
 
 The frontend build artifacts are committed under `internal/web/static/` and embedded into the binary via go:embed, so ordinary builds and deploys do not require Node.js. If you modify the frontend (`web/frontend/`), rebuild and commit the artifacts together:

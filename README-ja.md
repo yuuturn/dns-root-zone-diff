@@ -7,12 +7,13 @@ DNS root zone の変更を機械的に検知して通知するツール。
 ## 機能
 
 - https://www.internic.net/domain/root.zone から 2時間に一度ゾーン取得
+- DNSSEC トラストアンカー (root anchors) を https://data.iana.org/root-anchors/root-anchors.xml から同じ間隔で取得
 - 前回との差分を検出
 - 変更をカテゴリ別に整理（delegation / DNSSEC / glue / signature / zone / other）
 - 再署名ノイズを除いた実質的な変更をサマリーにして Slack Webhook へ通知
 - 同じサマリーを X (Twitter) API v2 へ 280文字ごとに分割して連投
 - 同じサマリーを BlueSky (AT Protocol) へ 300文字ごとに分割して投稿
-- diff 履歴を Web UI で閲覧 (Cloudflare [kumo](https://github.com/cloudflare/kumo) 製)
+- diff 履歴を Web UI で閲覧 (Cloudflare [kumo](https://github.com/cloudflare/kumo) 製、Root Zone / Root Anchors のタブで分離)
 
 ## 運用中
 
@@ -33,6 +34,8 @@ pre-commit install
 
 ```yaml
 zone_url: "https://www.internic.net/domain/root.zone"
+# root anchors (DNSSEC トラストアンカー) の取得元。空にすると root anchors 監視を無効化 (省略時は IANA)
+anchor_url: "https://data.iana.org/root-anchors/root-anchors.xml"
 fetch_interval: "2h"
 data_dir: "/var/lib/dns-root-diff"
 slack:
@@ -60,6 +63,7 @@ bluesky:
 環境変数で上書き可能:
 
 - `DNS_ROOT_DIFF_ZONE_URL`
+- `DNS_ROOT_DIFF_ANCHOR_URL`
 - `DNS_ROOT_DIFF_INTERVAL`
 - `DNS_ROOT_DIFF_DATA_DIR`
 - `SLACK_WEBHOOK_URL`
@@ -137,6 +141,31 @@ re-signing: 2800 RRSIG (omitted)
 (`  example. NS +1 -1`) に切り替え、それでも収まらない場合は末尾に
 `... +N more changes` として落とした件数を明記する。
 
+## Root Anchors (DNSSEC トラストアンカー) の監視
+
+root zone と同様に、IANA の root anchors ファイル
+(https://data.iana.org/root-anchors/root-anchors.xml) を同じ間隔 (`fetch_interval`)
+で取得し、前回スナップショットとの差分を検出する。
+
+- 各 `<KeyDigest>` は DS レコード相当として扱い、**キーの追加** (`+`)・**削除** (`-`)・
+  **退役** (`~`、`validUntil` 属性の付与) を検出する。退役日は明細の RData 末尾に
+  `YYYY-MM-DD` として表示される
+- 初回実行はベースラインとしてスナップショット保存のみ行い、通知・履歴記録はしない
+- 差分履歴は zone とは別に `data_dir/anchor-diffs/` へ保存され、Web UI の
+  Root Anchors タブで閲覧できる
+- 通知タイトルは `DNS Root Anchors changes` で、DS ダイジェスト (64文字) が切れないよう
+  明細行の RDATA 上限を広げている
+
+```text
+DNS Root Anchors changes
+DNSSEC 2
+
+[DNSSEC]
+  + Kmyv6jo DS 38696 8 2 683D2D0ACB8C9B712A1948B27F741219298D0A450D612C483AF444A4C0FB2B16
+  ~ Kjqmt7v DS 19036 8 2 49AAC11D7B6F6446702E54A1607371607A1A41855200FD2CE1CDDE32F24E8FB5
+    -> 19036 8 2 49AAC11D7B6F6446702E54A1607371607A1A41855200FD2CE1CDDE32F24E8FB5 2019-01-11
+```
+
 ## 実行
 
 ```bash
@@ -151,11 +180,14 @@ make build
 ## Web UI
 
 `web.enabled: true` にすると定期実行モード時に diff 履歴を閲覧できる Web サーバーが起動する
-(`-once` では起動しない)。履歴は変更検知のたびに `data_dir/diffs/` へ JSON として保存される。
+(`-once` では起動しない)。履歴は変更検知のたびに JSON として保存される
+(zone は `data_dir/diffs/`、root anchors は `data_dir/anchor-diffs/`)。
 
-- `GET /` : 一覧・詳細画面 (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))
-- `GET /api/diffs?page=1&per_page=20` : diff 履歴一覧
-- `GET /api/diffs/{id}` : diff 詳細
+- `GET /` : 一覧・詳細画面 (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))。Root Zone / Root Anchors のタブで切り替え
+- `GET /api/diffs?page=1&per_page=20` : root zone の diff 履歴一覧
+- `GET /api/diffs/{id}` : root zone の diff 詳細
+- `GET /api/anchors/diffs?page=1&per_page=20` : root anchors の diff 履歴一覧
+- `GET /api/anchors/diffs/{id}` : root anchors の diff 詳細
 - `GET /api/health` : 死活監視
 
 フロントエンドのビルド成果物は `internal/web/static/` にコミットされ、go:embed で
