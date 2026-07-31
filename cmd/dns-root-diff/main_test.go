@@ -326,3 +326,130 @@ func TestRunLoopWebListenError(t *testing.T) {
 		t.Fatal("runLoop() did not return on web listen failure")
 	}
 }
+
+// anchorXML はテスト用の root-anchors.xml フィクスチャ。
+const anchorXML = `<?xml version="1.0" encoding="UTF-8"?>
+<TrustAnchor id="TEST-ANCHOR-001" source="test">
+  <Zone>.</Zone>
+  <KeyDigest id="Ktest01" validFrom="2020-01-01T00:00:00+00:00">
+    <KeyTag>11111</KeyTag><Algorithm>8</Algorithm><DigestType>2</DigestType>
+    <Digest>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA</Digest>
+  </KeyDigest>
+</TrustAnchor>`
+
+func TestRunOnceAnchorBaseline(t *testing.T) {
+	zoneSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(".\t86400\tIN\tNS\ta.root-servers.net.\n"))
+	}))
+	defer zoneSrv.Close()
+	anchorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(anchorXML))
+	}))
+	defer anchorSrv.Close()
+
+	dir := t.TempDir()
+	cfg := config.Config{
+		ZoneURL:   zoneSrv.URL,
+		AnchorURL: anchorSrv.URL,
+		DataDir:   dir,
+	}
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatalf("runOnce() error = %v", err)
+	}
+	if !store.NewAnchor(dir).Exists() {
+		t.Error("anchor snapshot should exist after initial run")
+	}
+	if entries, _ := store.NewAnchorHistory(dir).List(); len(entries) != 0 {
+		t.Errorf("anchor history after baseline = %d, want 0", len(entries))
+	}
+}
+
+func TestRunOnceAnchorDetectsAndNotifies(t *testing.T) {
+	zoneSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(".\t86400\tIN\tNS\ta.root-servers.net.\n"))
+	}))
+	defer zoneSrv.Close()
+
+	// 1回目: 既存キー、2回目: キー追加
+	var anchorRequests int
+	anchorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		anchorRequests++
+		if anchorRequests == 1 {
+			_, _ = w.Write([]byte(anchorXML))
+			return
+		}
+		newXML := strings.Replace(anchorXML, "</TrustAnchor>",
+			`  <KeyDigest id="Knew002" validFrom="2026-07-01T00:00:00+00:00">
+    <KeyTag>22222</KeyTag><Algorithm>8</Algorithm><DigestType>2</DigestType>
+    <Digest>BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB</Digest>
+  </KeyDigest>
+</TrustAnchor>`, 1)
+		_, _ = w.Write([]byte(newXML))
+	}))
+	defer anchorSrv.Close()
+
+	var mu sync.Mutex
+	var anchorTexts []string
+	slack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]string
+		_ = json.Unmarshal(body, &payload)
+		// zone フローは初回実行時に全レコードを added として通知するため、
+		// anchor 通知 (タイトルで判別) だけを数える。
+		if strings.HasPrefix(payload["text"], "DNS Root Anchors changes") {
+			mu.Lock()
+			anchorTexts = append(anchorTexts, payload["text"])
+			mu.Unlock()
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer slack.Close()
+
+	dir := t.TempDir()
+	cfg := config.Config{
+		ZoneURL:   zoneSrv.URL,
+		AnchorURL: anchorSrv.URL,
+		DataDir:   dir,
+		Slack:     config.SlackConfig{Enabled: true, WebhookURL: slack.URL},
+	}
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(anchorTexts) != 1 {
+		t.Fatalf("anchor notifications = %d, want 1", len(anchorTexts))
+	}
+	if !strings.HasPrefix(anchorTexts[0], "DNS Root Anchors changes") {
+		t.Errorf("notification title = %q", anchorTexts[0])
+	}
+	if !strings.Contains(anchorTexts[0], "Knew002") {
+		t.Errorf("notification should mention the new key:\n%s", anchorTexts[0])
+	}
+	entries, err := store.NewAnchorHistory(dir).List()
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("anchor history = %d, %v; want 1", len(entries), err)
+	}
+	if entries[0].OldSerial != "TEST-ANCHOR-001" || entries[0].NewSerial != "TEST-ANCHOR-001" {
+		t.Errorf("serials = %q -> %q", entries[0].OldSerial, entries[0].NewSerial)
+	}
+}
+
+func TestRunOnceSkipsAnchorsWhenDisabled(t *testing.T) {
+	// AnchorURL が空なら anchor 取得に行かない (既存テストの前提を固定化)。
+	zoneSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(".\t86400\tIN\tNS\ta.root-servers.net.\n"))
+	}))
+	defer zoneSrv.Close()
+	cfg := config.Config{ZoneURL: zoneSrv.URL, DataDir: t.TempDir()}
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatalf("runOnce() error = %v", err)
+	}
+	if store.NewAnchor(cfg.DataDir).Exists() {
+		t.Error("anchor snapshot must not be created when AnchorURL is empty")
+	}
+}
