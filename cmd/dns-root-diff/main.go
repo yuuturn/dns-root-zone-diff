@@ -53,7 +53,7 @@ func runLoop(cfg config.Config, configPath string) error {
 	webErr := make(chan error, 1)
 	if cfg.Web.Enabled {
 		srv := &http.Server{
-			Handler: web.New(store.NewHistory(cfg.DataDir), web.StaticFS()).Handler(),
+			Handler: web.New(store.NewHistory(cfg.DataDir), store.NewAnchorHistory(cfg.DataDir), web.StaticFS()).Handler(),
 		}
 		// ポート競合や不正なアドレスを起動時に即検出できるよう bind は同期で行う。
 		ln, err := net.Listen("tcp", cfg.Web.Listen)
