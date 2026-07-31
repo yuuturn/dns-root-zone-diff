@@ -1,6 +1,6 @@
 import { Text } from "@cloudflare/kumo";
 import { GlobeHemisphereWestIcon } from "@phosphor-icons/react";
-import { Link, Outlet } from "react-router-dom";
+import { Link, NavLink, Outlet } from "react-router-dom";
 
 export function App() {
   return (
@@ -13,6 +13,21 @@ export function App() {
           </Text>
         </Link>
       </header>
+      <nav className="app-nav">
+        <NavLink
+          to="/"
+          end
+          className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+        >
+          Root Zone
+        </NavLink>
+        <NavLink
+          to="/anchors"
+          className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+        >
+          Root Anchors
+        </NavLink>
+      </nav>
       <Outlet />
     </div>
   );
