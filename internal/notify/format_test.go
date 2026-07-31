@@ -530,3 +530,47 @@ func TestTruncate(t *testing.T) {
 		t.Error("truncated multibyte string should stay valid UTF-8")
 	}
 }
+
+func TestFormatPostsCustomTitleAndRDataLen(t *testing.T) {
+	changes := []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "Kmyv6jo", Type: "DS", NewRData: "38696 8 2 683D2D0ACB8C9B712A1948B27F741219298D0A450D612C483AF444A4C0FB2B16"},
+	}
+	posts := FormatPosts(changes, FormatOptions{
+		Title:       "DNS Root Anchors changes",
+		RDataMaxLen: 120,
+		MaxLen:      280,
+	})
+	if len(posts) != 1 {
+		t.Fatalf("posts = %d, want 1", len(posts))
+	}
+	if !strings.HasPrefix(posts[0], "DNS Root Anchors changes") {
+		t.Errorf("post title = %q, want custom title", posts[0])
+	}
+	if !strings.Contains(posts[0], "683D2D0ACB8C9B712A1948B27F741219298D0A450D612C483AF444A4C0FB2B16") {
+		t.Errorf("full digest must not be truncated with RDataMaxLen=120:\n%s", posts[0])
+	}
+}
+
+func TestFormatPostsDefaultTitle(t *testing.T) {
+	changes := []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "example.", Type: "NS", NewRData: "a.nic.example."},
+	}
+	posts := FormatPosts(changes, FormatOptions{MaxLen: 280})
+	if len(posts) != 1 || !strings.HasPrefix(posts[0], "DNS Root Zone changes") {
+		t.Fatalf("default title expected, got %v", posts)
+	}
+}
+
+func TestFormatPostsDefaultRDataTruncation(t *testing.T) {
+	long := "38696 8 2 683D2D0ACB8C9B712A1948B27F741219298D0A450D612C483AF444A4C0FB2B16"
+	changes := []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "Kmyv6jo", Type: "DS", NewRData: long},
+	}
+	posts := FormatPosts(changes, FormatOptions{MaxLen: 280})
+	if len(posts) != 1 {
+		t.Fatalf("posts = %d, want 1", len(posts))
+	}
+	if strings.Contains(posts[0], long) {
+		t.Errorf("long rdata must be truncated by default (RDataMaxLen=0):\n%s", posts[0])
+	}
+}
