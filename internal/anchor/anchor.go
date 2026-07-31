@@ -5,6 +5,9 @@ package anchor
 import (
 	"encoding/xml"
 	"fmt"
+
+	"github.com/yfujii/dns-root-diff/internal/diff"
+	"github.com/yfujii/dns-root-diff/internal/zone"
 )
 
 // KeyDigest は <KeyDigest> 要素1つ分 (1つの KSK/DNSKEY に対応する DS 情報)。
@@ -58,4 +61,45 @@ func Parse(data []byte) (TrustAnchors, error) {
 		ta.Digests = append(ta.Digests, KeyDigest(kd))
 	}
 	return ta, nil
+}
+
+// ToRecords は TrustAnchors を diff エンジン用の擬似ゾーンレコードに変換する。
+// 各 KeyDigest は DS レコードとして表現する:
+//
+//	Name = KeyDigest の id (例 "Kmyv6jo")
+//	Type = "DS" (diff.Categorize で CategoryDNSSEC になる)
+//	RData = "<KeyTag> <Algorithm> <DigestType> <Digest> [<validUntilの日付>]"
+//
+// 退役済みキー (validUntil あり) は RData 末尾に日付 (YYYY-MM-DD) を持つため、
+// 退役の瞬間 (validUntil 付与) が modified として差分検出される。
+func ToRecords(ta TrustAnchors) []zone.Record {
+	recs := make([]zone.Record, 0, len(ta.Digests))
+	for _, kd := range ta.Digests {
+		rdata := fmt.Sprintf("%d %d %d %s", kd.KeyTag, kd.Algorithm, kd.DigestType, kd.Digest)
+		if kd.ValidUntil != "" && len(kd.ValidUntil) >= 10 {
+			rdata += " " + kd.ValidUntil[:10]
+		}
+		recs = append(recs, zone.Record{
+			Name:  kd.ID,
+			TTL:   0,
+			Class: "IN",
+			Type:  "DS",
+			RData: rdata,
+		})
+	}
+	return recs
+}
+
+// Diff は新旧の TrustAnchors の KeyDigest 集合を比較して変更点を返す。
+func Diff(oldTA, newTA TrustAnchors) []diff.Change {
+	return diff.Diff(ToRecords(oldTA), ToRecords(newTA))
+}
+
+// Serial は履歴エントリの serial 相当として使う TrustAnchor の id を返す。
+// id が無い場合は "unknown" を返す。
+func Serial(ta TrustAnchors) string {
+	if ta.ID == "" {
+		return "unknown"
+	}
+	return ta.ID
 }
