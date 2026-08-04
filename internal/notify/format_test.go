@@ -281,6 +281,69 @@ func TestFormatPostsRepeatsHeadingAcrossParts(t *testing.T) {
 	}
 }
 
+// TestFormatPostsCompactOverviewSplitsAndRepeatsHeading は compact モードでも
+// 分割と heading 再掲が正しく動くこと (X 実投稿の (1/3) (2/3) (3/3) パターンを担保) を確認する。
+// 8/3 の実投稿を模した DNSSEC 6 件 + signature 1 件 + 追加 DNSSEC 4 件の構成で、
+// 少なくとも 2 パート以上に分かれ、各パートに [DNSSEC] または [signature] が
+// 再掲されることを検証する。
+func TestFormatPostsCompactOverviewSplitsAndRepeatsHeading(t *testing.T) {
+	changes := []diff.Change{
+		// 1パート目に押し込む DNSSEC (6件) と signature (1件)
+		{Kind: diff.ChangeAdded, Name: "al.", Type: "DS", NewRData: "46645 13 2 A4DD7495AEA086F4602ACF3932BADDAABBCCDD"},
+		{Kind: diff.ChangeModified, Name: "al.", Type: "NSEC",
+			OldRData: "alibaba. NS RRSIG NSEC", NewRData: "alibaba. NS DS RRSIG NSEC"},
+		{Kind: diff.ChangeAdded, Name: "al.", Type: "RRSIG",
+			NewRData: "DS 8 1 86400 20260817050000 20260804040000 57780 . dummy"},
+		// 2パート目に押し込む DNSSEC (4件)
+		{Kind: diff.ChangeAdded, Name: "alsace.", Type: "DS", NewRData: "6291 13 2 49DDA30E62091F08C72B6DD7A3C99EAABBCCDD"},
+		{Kind: diff.ChangeAdded, Name: "mma.", Type: "DS", NewRData: "24045 13 2 CDB760636E956607DF832CE56C98CAABBCCDD"},
+		{Kind: diff.ChangeAdded, Name: "museum.", Type: "DS", NewRData: "23046 13 2 C19F3E83B491C5690EF879DD0C1E4AABBCCDD"},
+		{Kind: diff.ChangeRemoved, Name: "total.", Type: "DS", OldRData: "2568 13 2 9AC9895253012C60A05E701FE237F2AABBCCDD"},
+	}
+	parts := FormatPosts(changes, compactTweetOpts())
+	if len(parts) < 2 {
+		t.Fatalf("got %d parts, want >= 2:\n%s", len(parts), strings.Join(parts, "\n---\n"))
+	}
+	joined := strings.Join(parts, "\n----\n")
+	// どのパートにも serial / re-signing 行は出ない。
+	if strings.Contains(joined, "serial") {
+		t.Errorf("compact overview must not contain serial line:\n%s", joined)
+	}
+	if strings.Contains(joined, "re-signing") {
+		t.Errorf("compact overview must not contain re-signing line:\n%s", joined)
+	}
+	// 1件目・2件目・3件目 … すべてに postTitle + (i/n) の番号が付く。
+	for i, p := range parts {
+		want := fmt.Sprintf("%s (%d/%d)", postTitle, i+1, len(parts))
+		if !strings.HasPrefix(p, want) {
+			t.Errorf("part %d should start with %q, got:\n%s", i+1, want, p)
+		}
+		if n := utf8.RuneCountInString(p); n > 280 {
+			t.Errorf("part %d is %d runes (> 280):\n%s", i+1, n, p)
+		}
+	}
+	// 分割後の各パートに [DNSSEC] または [signature] の heading が少なくとも1つある。
+	for i, p := range parts {
+		if !strings.Contains(p, "[DNSSEC]") && !strings.Contains(p, "[signature]") {
+			t.Errorf("part %d missing category heading:\n%s", i+1, p)
+		}
+	}
+	// 全レコードの明細が (どこかの) パートに含まれている。
+	for _, want := range []string{
+		"al. DS",
+		"al. NSEC",
+		"al. RRSIG",
+		"alsace. DS",
+		"mma. DS",
+		"museum. DS",
+		"total. DS",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in any part:\n%s", want, joined)
+		}
+	}
+}
+
 func TestFormatPostsFallsBackToTLDAggregation(t *testing.T) {
 	// レコード単位では MaxParts に収まらないが、TLD 集約なら収まる件数。
 	var changes []diff.Change
