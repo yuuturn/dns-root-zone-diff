@@ -46,6 +46,10 @@ type FormatOptions struct {
 	// root anchors の DS ダイジェスト (64文字 + 退役日) は 40 では切れるため、
 	// anchors 通知では 120 を指定する。
 	RDataMaxLen int
+	// CompactOverview は概要ブロック (SOA serial / 再署名件数) を省く。
+	// true の場合、SOA serial 行と re-signing 行を出さない。
+	// 280字制限の X 向け圧縮オプション。Slack / BlueSky のような緩い上限では false のままにする。
+	CompactOverview bool
 }
 
 // title はパーツ先頭行のタイトルを返す。
@@ -208,7 +212,7 @@ func FormatPosts(changes []diff.Change, opts FormatOptions) []string {
 		return nil
 	}
 
-	overview := overviewBlock(changes, sub)
+	overview := overviewBlock(changes, sub, opts.CompactOverview)
 
 	for _, detail := range [][]block{recordBlocks(sub, opts), aggregatedBlocks(sub, opts)} {
 		parts, dropped := pack(append([]block{overview}, detail...), opts, 0)
@@ -233,11 +237,15 @@ func anchorFormatOptions(base FormatOptions) FormatOptions {
 }
 
 // overviewBlock は先頭パーツに置く概要ブロックを組み立てる。
-func overviewBlock(all, sub []diff.Change) block {
+// opts.CompactOverview が true の場合は serial 行と re-signing 行を省略し、
+// カテゴリ件数だけを残すことで X 投稿の文字数を節約する。
+func overviewBlock(all, sub []diff.Change, compact bool) block {
 	var lines []detailLine
 
-	if old, new, ok := soaSerials(all); ok {
-		lines = append(lines, detailLine{text: fmt.Sprintf("serial %s -> %s", old, new)})
+	if !compact {
+		if old, new, ok := soaSerials(all); ok {
+			lines = append(lines, detailLine{text: fmt.Sprintf("serial %s -> %s", old, new)})
+		}
 	}
 
 	counts := diff.CountByCategory(sub)
@@ -249,9 +257,11 @@ func overviewBlock(all, sub []diff.Change) block {
 	}
 	lines = append(lines, detailLine{text: strings.Join(catParts, " / ")})
 
-	// 通知から省いた再署名ノイズの規模だけは伝える。
-	if n := diff.CountMechanical(all, "RRSIG"); n > 0 {
-		lines = append(lines, detailLine{text: fmt.Sprintf("re-signing: %d RRSIG (omitted)", n)})
+	// 通知から省いた再署名ノイズの規模だけは伝える。compact モードでは省略。
+	if !compact {
+		if n := diff.CountMechanical(all, "RRSIG"); n > 0 {
+			lines = append(lines, detailLine{text: fmt.Sprintf("re-signing: %d RRSIG (omitted)", n)})
+		}
 	}
 
 	lines = append(lines, detailLine{text: ""})

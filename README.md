@@ -129,6 +129,19 @@ re-signing: 2800 RRSIG (omitted)
 
 The breakdown is listed per record. When it does not fit within the limit (`max_posts`), it switches to per-TLD aggregation (`  example. NS +1 -1`), and if it still does not fit, the dropped count is shown explicitly at the end as `... +N more changes`.
 
+X is constrained to 280 characters, so it omits the `serial` and `re-signing` lines from the overview to keep room for per-record detail lines:
+
+```
+DNS Root Zone changes (1/2)
+delegation 2 / DNSSEC 1 / glue 2
+
+[delegation]
+  - gone. NS ns1.dns.nic.gone.
+  + newgtld. NS ns1.dns.nic.newgtld.
+[DNSSEC]
+  + newgtld. DS 12345 8 2 A1B2C3D4E5F60718293A4B5C6D7E8F...
+```
+
 ## Root Anchors (DNSSEC Trust Anchors) Monitoring
 
 Like the root zone, the IANA root anchors file (https://data.iana.org/root-anchors/root-anchors.xml) is fetched at the same interval (`fetch_interval`) and compared against the previous snapshot.

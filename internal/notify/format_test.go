@@ -14,6 +14,62 @@ func tweetOpts() FormatOptions {
 	return FormatOptions{MaxLen: 280, MaxParts: 4, Numbering: true, Weighted: true}
 }
 
+// compactTweetOpts は X 向けの圧縮フォーマットオプション。serial / re-signing 行を省く。
+func compactTweetOpts() FormatOptions {
+	opts := tweetOpts()
+	opts.CompactOverview = true
+	return opts
+}
+
+func TestFormatPostsCompactOverviewOmitsSerialAndResigning(t *testing.T) {
+	changes := append(resigningChanges(3),
+		diff.Change{Kind: diff.ChangeAdded, Name: "newgtld.", Type: "NS", NewRData: "ns1.newgtld."},
+		diff.Change{Kind: diff.ChangeAdded, Name: "newgtld.", Type: "DS", NewRData: "12345 8 2 ABCDEF"},
+	)
+	parts := FormatPosts(changes, compactTweetOpts())
+	if len(parts) != 1 {
+		t.Fatalf("got %d parts, want 1:\n%s", len(parts), strings.Join(parts, "\n---\n"))
+	}
+	msg := parts[0]
+	for _, want := range []string{
+		postTitle,
+		"delegation 1 / DNSSEC 1",
+		"[delegation]",
+		"+ newgtld. NS ns1.newgtld.",
+		"[DNSSEC]",
+		"+ newgtld. DS 12345 8 2 ABCDEF",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("missing %q in:\n%s", want, msg)
+		}
+	}
+	for _, dontWant := range []string{"serial", "re-signing"} {
+		if strings.Contains(msg, dontWant) {
+			t.Errorf("compact overview should not contain %q line:\n%s", dontWant, msg)
+		}
+	}
+}
+
+func TestFormatPostsCompactOverviewAnchorsOmitsSerial(t *testing.T) {
+	// root anchors 通知でも compact モードは serial 行を出さない
+	// (anchor に serial は付かないが、行ロジックを共通化した結果を確認する)。
+	opts := compactTweetOpts()
+	opts.Title = "DNS Root Anchors changes"
+	opts.RDataMaxLen = anchorRDataMaxLen
+	parts := FormatPosts([]diff.Change{
+		{Kind: diff.ChangeAdded, Name: "19036", Type: "DS", NewRData: "19036 13 2 AABBCCDD"},
+	}, opts)
+	if len(parts) != 1 {
+		t.Fatalf("got %d parts, want 1:\n%s", len(parts), strings.Join(parts, "\n---\n"))
+	}
+	if strings.Contains(parts[0], "serial") {
+		t.Errorf("anchor compact overview should not contain serial line:\n%s", parts[0])
+	}
+	if !strings.Contains(parts[0], "[DNSSEC]") {
+		t.Errorf("missing [DNSSEC] section:\n%s", parts[0])
+	}
+}
+
 // resigningChanges は再署名のみの変更 (RRSIG 入れ替え + SOA serial bump) を作る。
 func resigningChanges(n int) []diff.Change {
 	changes := []diff.Change{
