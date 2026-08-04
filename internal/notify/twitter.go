@@ -106,12 +106,17 @@ func (tw *TwitterNotifier) Name() string {
 // Notify は X に変更内容をツイートする。
 // X の重み付き文字数で280文字に収まるパーツに分割し、番号を付けて順に連投する。
 // 実質的な変更がない (再署名のみの) 場合は何も投稿しない。
+//
+// X の 280 字制限は厳しいので、概要ブロックから serial 行と re-signing 行を省いて
+// 文字数を節約する (CompactOverview=true)。Slack / BlueSky のような上限が緩い
+// notifier では serial / re-signing を残している。
 func (tw *TwitterNotifier) Notify(ctx context.Context, changes []diff.Change) error {
 	posts := FormatPosts(changes, FormatOptions{
-		MaxLen:    tweetMaxLen,
-		MaxParts:  tw.maxPosts,
-		Numbering: true,
-		Weighted:  true,
+		MaxLen:          tweetMaxLen,
+		MaxParts:        tw.maxPosts,
+		Numbering:       true,
+		Weighted:        true,
+		CompactOverview: true,
 	})
 
 	for i, msg := range posts {
@@ -130,12 +135,14 @@ func (tw *TwitterNotifier) Notify(ctx context.Context, changes []diff.Change) er
 }
 
 // NotifyAnchors は root anchors の変更を X にツイートする。
+// X の 280 字制限に合わせて serial / re-signing 行を省いた圧縮概要を使う。
 func (tw *TwitterNotifier) NotifyAnchors(ctx context.Context, changes []diff.Change) error {
 	posts := FormatPosts(changes, anchorFormatOptions(FormatOptions{
-		MaxLen:    tweetMaxLen,
-		MaxParts:  tw.maxPosts,
-		Numbering: true,
-		Weighted:  true,
+		MaxLen:          tweetMaxLen,
+		MaxParts:        tw.maxPosts,
+		Numbering:       true,
+		Weighted:        true,
+		CompactOverview: true,
 	}))
 
 	for i, msg := range posts {

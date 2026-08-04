@@ -141,6 +141,20 @@ re-signing: 2800 RRSIG (omitted)
 (`  example. NS +1 -1`) に切り替え、それでも収まらない場合は末尾に
 `... +N more changes` として落とした件数を明記する。
 
+X は280文字に収めるため、レコード単位の明細を優先して概要の `serial` 行と
+`re-signing` 行を省く:
+
+```
+DNS Root Zone changes (1/2)
+delegation 2 / DNSSEC 1 / glue 2
+
+[delegation]
+  - gone. NS ns1.dns.nic.gone.
+  + newgtld. NS ns1.dns.nic.newgtld.
+[DNSSEC]
+  + newgtld. DS 12345 8 2 A1B2C3D4E5F60718293A4B5C6D7E8F...
+```
+
 ## Root Anchors (DNSSEC トラストアンカー) の監視
 
 root zone と同様に、IANA の root anchors ファイル
