@@ -94,6 +94,8 @@ Detected changes are categorized by RR type.
 
 The root zone is re-signed every 12 hours, at which point about 2,800 RRSIG records are replaced and the SOA serial and ZONEMD serial/digest are also updated. Runs that consist **only** of this **mechanical change** (over 5,000 diffs) are **not notified to Slack/X**. The full history is retained in the Web UI.
 
+The first run (no previous snapshot) only saves a baseline snapshot; no notification or history is recorded, since every record would otherwise be reported as added.
+
 Whether a change is mechanical is determined not by RR type but by **pairing old and new records**. Because an RRset with multiple records is decomposed into removed + added (not folded into a "modified" diff), re-signing pairs records by their unchanged fields and TTL, and only unpaired records are treated as mechanical changes.
 
 | RR type | Fields used for pairing | Fields allowed to change |
