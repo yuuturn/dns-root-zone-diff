@@ -3,6 +3,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -80,5 +81,22 @@ func TestAnchorStoreSaveLoad(t *testing.T) {
 	data, err := s.Load()
 	if err != nil || string(data) != "<TrustAnchor/>" {
 		t.Fatalf("Load() = %q, %v", data, err)
+	}
+}
+
+func TestSaveLeavesNoTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	if err := s.Save([]byte("data")); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".tmp-") {
+			t.Errorf("temp file left after Save: %s", e.Name())
+		}
 	}
 }
