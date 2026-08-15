@@ -107,11 +107,21 @@ func Load(path string) (Config, error) {
 	if cfg.Twitter.MaxPosts <= 0 {
 		cfg.Twitter.MaxPosts = defaultTwitterMaxPosts
 	}
+	// fetch_interval の 0・負値は runLoop の time.NewTicker が panic するため
+	// デフォルトに補正する (MaxPosts と同じパターン)。
+	if cfg.FetchInterval <= 0 {
+		cfg.FetchInterval = Default().FetchInterval
+	}
 	return cfg, nil
 }
 
 // SaveOAuth2Tokens は config ファイル上の OAuth2 トークンを更新して書き戻す。
 // path が空の場合は何もしない。
+//
+// ファイル全体を再シリアライズせず yaml.Node 上で対象キーのみ書き換える。
+// これによりコメントや書式、未定義キーが保持され、また未指定キーにデフォルト値が
+// 追記される (例: anchor_url が省略された構成で root anchors 監視が有効化される)
+// 事故を防ぐ。
 func SaveOAuth2Tokens(path, accessToken, refreshToken string) error {
 	if path == "" {
 		return nil
@@ -120,15 +130,23 @@ func SaveOAuth2Tokens(path, accessToken, refreshToken string) error {
 	if err != nil {
 		return fmt.Errorf("read config file: %w", err)
 	}
-	cfg := Default()
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
 		return fmt.Errorf("parse config file: %w", err)
 	}
-	cfg.Twitter.OAuth2AccessToken = accessToken
-	if refreshToken != "" {
-		cfg.Twitter.OAuth2RefreshToken = refreshToken
+	if len(root.Content) == 0 {
+		return fmt.Errorf("config file is empty")
 	}
-	out, err := yaml.Marshal(&cfg)
+	top := root.Content[0]
+	if top.Kind != yaml.MappingNode {
+		return fmt.Errorf("config file is not a mapping")
+	}
+	twitter := childMapping(top, "twitter")
+	setString(twitter, "oauth2_access_token", accessToken)
+	if refreshToken != "" {
+		setString(twitter, "oauth2_refresh_token", refreshToken)
+	}
+	out, err := yaml.Marshal(&root)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
@@ -136,6 +154,46 @@ func SaveOAuth2Tokens(path, accessToken, refreshToken string) error {
 		return fmt.Errorf("write config file: %w", err)
 	}
 	return nil
+}
+
+// childMapping は mapping ノード内の name キーの値ノード (mapping) を返す。
+// キーが無い場合は末尾に追加して新規作成する。既存の値が mapping でない場合は
+// mapping ノードで置き換える。
+func childMapping(mapping *yaml.Node, name string) *yaml.Node {
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == name {
+			val := mapping.Content[i+1]
+			if val.Kind == yaml.MappingNode {
+				return val
+			}
+			val.Kind = yaml.MappingNode
+			val.Tag = "!!map"
+			val.Value = ""
+			val.Content = nil
+			return val
+		}
+	}
+	mapping.Content = append(mapping.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name},
+		&yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"},
+	)
+	return mapping.Content[len(mapping.Content)-1]
+}
+
+// setString は mapping ノード内の name キーの値を文字列スカラーで上書きする。
+// キーが無い場合は末尾に追加する。
+func setString(mapping *yaml.Node, name, value string) {
+	scalar := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == name {
+			mapping.Content[i+1] = scalar
+			return
+		}
+	}
+	mapping.Content = append(mapping.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name},
+		scalar,
+	)
 }
 
 func applyEnv(cfg *Config) {
