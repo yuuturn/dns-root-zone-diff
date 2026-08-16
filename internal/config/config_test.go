@@ -202,6 +202,43 @@ twitter:
 	}
 }
 
+func TestSaveOAuth2TokensPreservesInlineComments(t *testing.T) {
+	// トークン行の行末インラインコメントは yaml.v3 では値ノードの LineComment に
+	// 保持される。setString がノードを置換する際にコメントを転写しないと失われる。
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `twitter:
+  enabled: true
+  oauth2_access_token: "old-access" # managed by ops
+  oauth2_refresh_token: "old-refresh" # keep me
+  oauth2_client_id: "clientid"
+  oauth2_client_secret: "clientsecret"
+`
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveOAuth2Tokens(path, "new-access", "new-refresh"); err != nil {
+		t.Fatalf("SaveOAuth2Tokens() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "# managed by ops") {
+		t.Errorf("inline comment on access token line lost:\n%s", data)
+	}
+	if !strings.Contains(string(data), "# keep me") {
+		t.Errorf("inline comment on refresh token line lost:\n%s", data)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Twitter.OAuth2AccessToken != "new-access" || cfg.Twitter.OAuth2RefreshToken != "new-refresh" {
+		t.Errorf("tokens not updated: access=%q refresh=%q", cfg.Twitter.OAuth2AccessToken, cfg.Twitter.OAuth2RefreshToken)
+	}
+}
+
 func TestSaveOAuth2TokensKeepsRefreshWhenEmpty(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

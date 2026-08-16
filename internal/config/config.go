@@ -208,18 +208,23 @@ func childMapping(mapping *yaml.Node, name string) *yaml.Node {
 }
 
 // setString は mapping ノード内の name キーの値を文字列スカラーで上書きする。
-// キーが無い場合は末尾に追加する。
+// キーが無い場合は末尾に追加する。既存ノードに付随するコメント (行末
+// インラインコメントなど) は新しいノードに転写して保持する。
 func setString(mapping *yaml.Node, name, value string) {
-	scalar := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
 		if mapping.Content[i].Value == name {
+			old := mapping.Content[i+1]
+			scalar := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
+			scalar.HeadComment = old.HeadComment
+			scalar.LineComment = old.LineComment
+			scalar.FootComment = old.FootComment
 			mapping.Content[i+1] = scalar
 			return
 		}
 	}
 	mapping.Content = append(mapping.Content,
 		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name},
-		scalar,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value},
 	)
 }
 
