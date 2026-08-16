@@ -268,6 +268,35 @@ func TestLoadFetchIntervalEnvZeroDefaulted(t *testing.T) {
 	}
 }
 
+func TestSaveOAuth2TokensRejectsDuplicateKeys(t *testing.T) {
+	// yaml.v3 は struct への unmarshal (Load) では重複マッピングキーをエラーにするが、
+	// Node への unmarshal (SaveOAuth2Tokens) では検出しない (先頭のキーが勝つ)。
+	// トークン更新が Load に反映されず無言で消えるのを防ぐため、
+	// SaveOAuth2Tokens も Load と同じ判定 (重複キーはエラー) にする。
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"top-level", "twitter:\n  enabled: true\ntwitter:\n  enabled: true\n"},
+		{"nested", "twitter:\n  enabled: true\n  oauth2_access_token: \"a\"\n  oauth2_access_token: \"b\"\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			if err := os.WriteFile(path, []byte(tt.content), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := SaveOAuth2Tokens(path, "new-access", "new-refresh"); err == nil {
+				t.Error("SaveOAuth2Tokens() = nil, want error on duplicate keys")
+			}
+			if _, err := Load(path); err == nil {
+				t.Error("Load() = nil, want error on duplicate keys")
+			}
+		})
+	}
+}
+
 func TestLoadNoFile(t *testing.T) {
 	cfg, err := Load("")
 	if err != nil {

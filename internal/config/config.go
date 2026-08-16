@@ -141,6 +141,12 @@ func SaveOAuth2Tokens(path, accessToken, refreshToken string) error {
 	if top.Kind != yaml.MappingNode {
 		return fmt.Errorf("config file is not a mapping")
 	}
+	// yaml.v3 は Node への unmarshal では重複キーを検出しない (struct への
+	// unmarshal である Load はエラーにする)。Load と同じ判定に揃え、更新が
+	// 反映されない重複キー構成を無言で受け入れない。
+	if hasDuplicateKey(top) {
+		return fmt.Errorf("config file has duplicate keys")
+	}
 	twitter := childMapping(top, "twitter")
 	setString(twitter, "oauth2_access_token", accessToken)
 	if refreshToken != "" {
@@ -154,6 +160,27 @@ func SaveOAuth2Tokens(path, accessToken, refreshToken string) error {
 		return fmt.Errorf("write config file: %w", err)
 	}
 	return nil
+}
+
+// hasDuplicateKey は n 以下のマッピングノードに重複キーがあるかを返す。
+// Load (struct への unmarshal) は yaml.v3 が全レベルの重複キーをエラーにするため、
+// SaveOAuth2Tokens も同じ判定を再帰的に行う。
+func hasDuplicateKey(n *yaml.Node) bool {
+	if n.Kind != yaml.MappingNode {
+		return false
+	}
+	seen := make(map[string]struct{}, len(n.Content)/2)
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		name := n.Content[i].Value
+		if _, ok := seen[name]; ok {
+			return true
+		}
+		seen[name] = struct{}{}
+		if hasDuplicateKey(n.Content[i+1]) {
+			return true
+		}
+	}
+	return false
 }
 
 // childMapping は mapping ノード内の name キーの値ノード (mapping) を返す。
