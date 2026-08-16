@@ -180,21 +180,23 @@ func runZoneOnce(ctx context.Context, cfg config.Config, configPath string) erro
 		fmt.Println("no changes detected")
 	} else {
 		fmt.Printf("detected %d changes\n", len(changes))
-		// root zone は12時間ごとに再署名され、その際 RRSIG/SOA/ZONEMD が機械的に入れ替わる。
-		// 実質的な変更を伴わない回は通知しない (Web UI には履歴として残す)。
-		if substantive := diff.Substantive(changes); len(substantive) == 0 {
-			fmt.Println("re-signing only; skipping notification")
-		} else {
-			fmt.Printf("%d substantive changes\n", len(substantive))
-			notifiers := buildNotifiers(cfg, configPath)
-			for _, n := range notifiers {
-				if err := n.Notify(ctx, changes); err != nil {
-					fmt.Fprintf(os.Stderr, "notify %s failed: %v\n", n.Name(), err)
+		// 初回実行 (前回スナップショットなし) は全レコードが added になるため、
+		// anchors (runAnchorOnce) と同様に通知も履歴も行わない。
+		// 初回に全レコードを通知するのは公開アカウントへのノイズになるため。
+		if hadPrevious {
+			// root zone は12時間ごとに再署名され、その際 RRSIG/SOA/ZONEMD が機械的に入れ替わる。
+			// 実質的な変更を伴わない回は通知しない (Web UI には履歴として残す)。
+			if substantive := diff.Substantive(changes); len(substantive) == 0 {
+				fmt.Println("re-signing only; skipping notification")
+			} else {
+				fmt.Printf("%d substantive changes\n", len(substantive))
+				notifiers := buildNotifiers(cfg, configPath)
+				for _, n := range notifiers {
+					if err := n.Notify(ctx, changes); err != nil {
+						fmt.Fprintf(os.Stderr, "notify %s failed: %v\n", n.Name(), err)
+					}
 				}
 			}
-		}
-		// 初回実行 (前回スナップショットなし) は全レコードが added になるため履歴には残さない。
-		if hadPrevious {
 			oldSerial, _ := zone.SOASerial(oldRecords)
 			newSerial, ok := zone.SOASerial(records)
 			if !ok {

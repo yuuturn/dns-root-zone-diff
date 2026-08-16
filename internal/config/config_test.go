@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -126,6 +127,210 @@ twitter:
 	}
 	if cfg.Twitter.OAuth2ClientID != "clientid" {
 		t.Errorf("OAuth2ClientID = %q, want clientid", cfg.Twitter.OAuth2ClientID)
+	}
+}
+
+func TestSaveOAuth2TokensPreservesCommentsAndOmittedKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `# managed by ops: do not edit manually
+zone_url: "https://example.com/root.zone"
+# anchor monitoring intentionally disabled (key omitted)
+twitter:
+  enabled: true
+  oauth2_access_token: "old-access"
+  oauth2_refresh_token: "old-refresh"
+  oauth2_client_id: "clientid"
+  oauth2_client_secret: "clientsecret"
+`
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveOAuth2Tokens(path, "new-access", "new-refresh"); err != nil {
+		t.Fatalf("SaveOAuth2Tokens() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "managed by ops") {
+		t.Errorf("comment lost after token save:\n%s", data)
+	}
+	// 未指定キーにデフォルト値が追記されないこと (anchor_url は省略されたまま)。
+	if strings.Contains(string(data), "anchor_url") {
+		t.Errorf("omitted anchor_url was written by token save:\n%s", data)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Twitter.OAuth2AccessToken != "new-access" {
+		t.Errorf("OAuth2AccessToken = %q, want new-access", cfg.Twitter.OAuth2AccessToken)
+	}
+	if cfg.Twitter.OAuth2RefreshToken != "new-refresh" {
+		t.Errorf("OAuth2RefreshToken = %q, want new-refresh", cfg.Twitter.OAuth2RefreshToken)
+	}
+	if cfg.Twitter.OAuth2ClientID != "clientid" {
+		t.Errorf("OAuth2ClientID = %q, want clientid preserved", cfg.Twitter.OAuth2ClientID)
+	}
+}
+
+func TestSaveOAuth2TokensKeepsExplicitEmptyAnchorURL(t *testing.T) {
+	// anchor_url: "" を明示した構成 (root anchors 監視無効) は保存後も空のまま。
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `anchor_url: ""
+twitter:
+  enabled: true
+  oauth2_access_token: "old-access"
+  oauth2_refresh_token: "old-refresh"
+  oauth2_client_id: "clientid"
+  oauth2_client_secret: "clientsecret"
+`
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveOAuth2Tokens(path, "new-access", "new-refresh"); err != nil {
+		t.Fatalf("SaveOAuth2Tokens() error = %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AnchorURL != "" {
+		t.Errorf("AnchorURL = %q, want empty (anchors monitoring must stay disabled)", cfg.AnchorURL)
+	}
+}
+
+func TestSaveOAuth2TokensPreservesInlineComments(t *testing.T) {
+	// トークン行の行末インラインコメントは yaml.v3 では値ノードの LineComment に
+	// 保持される。setString がノードを置換する際にコメントを転写しないと失われる。
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `twitter:
+  enabled: true
+  oauth2_access_token: "old-access" # managed by ops
+  oauth2_refresh_token: "old-refresh" # keep me
+  oauth2_client_id: "clientid"
+  oauth2_client_secret: "clientsecret"
+`
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveOAuth2Tokens(path, "new-access", "new-refresh"); err != nil {
+		t.Fatalf("SaveOAuth2Tokens() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "# managed by ops") {
+		t.Errorf("inline comment on access token line lost:\n%s", data)
+	}
+	if !strings.Contains(string(data), "# keep me") {
+		t.Errorf("inline comment on refresh token line lost:\n%s", data)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Twitter.OAuth2AccessToken != "new-access" || cfg.Twitter.OAuth2RefreshToken != "new-refresh" {
+		t.Errorf("tokens not updated: access=%q refresh=%q", cfg.Twitter.OAuth2AccessToken, cfg.Twitter.OAuth2RefreshToken)
+	}
+}
+
+func TestSaveOAuth2TokensKeepsRefreshWhenEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `twitter:
+  enabled: true
+  oauth2_access_token: "old-access"
+  oauth2_refresh_token: "old-refresh"
+  oauth2_client_id: "clientid"
+  oauth2_client_secret: "clientsecret"
+`
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveOAuth2Tokens(path, "new-access", ""); err != nil {
+		t.Fatalf("SaveOAuth2Tokens() error = %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Twitter.OAuth2AccessToken != "new-access" {
+		t.Errorf("OAuth2AccessToken = %q, want new-access", cfg.Twitter.OAuth2AccessToken)
+	}
+	if cfg.Twitter.OAuth2RefreshToken != "old-refresh" {
+		t.Errorf("OAuth2RefreshToken = %q, want old-refresh preserved", cfg.Twitter.OAuth2RefreshToken)
+	}
+}
+
+func TestLoadFetchIntervalDefaulted(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"zero is defaulted", "fetch_interval: 0h\n"},
+		{"negative is defaulted", "fetch_interval: -1h\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tt.content), 0644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.FetchInterval != 2*time.Hour {
+				t.Errorf("FetchInterval = %v, want default 2h", cfg.FetchInterval)
+			}
+		})
+	}
+}
+
+func TestLoadFetchIntervalEnvZeroDefaulted(t *testing.T) {
+	// DNS_ROOT_DIFF_INTERVAL=0s はパースに成功するため 0 が入り、
+	// runLoop の time.NewTicker が panic する。Load でデフォルトに補正する。
+	t.Setenv("DNS_ROOT_DIFF_INTERVAL", "0s")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.FetchInterval != 2*time.Hour {
+		t.Errorf("FetchInterval = %v, want default 2h", cfg.FetchInterval)
+	}
+}
+
+func TestSaveOAuth2TokensRejectsDuplicateKeys(t *testing.T) {
+	// yaml.v3 は struct への unmarshal (Load) では重複マッピングキーをエラーにするが、
+	// Node への unmarshal (SaveOAuth2Tokens) では検出しない (先頭のキーが勝つ)。
+	// トークン更新が Load に反映されず無言で消えるのを防ぐため、
+	// SaveOAuth2Tokens も Load と同じ判定 (重複キーはエラー) にする。
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"top-level", "twitter:\n  enabled: true\ntwitter:\n  enabled: true\n"},
+		{"nested", "twitter:\n  enabled: true\n  oauth2_access_token: \"a\"\n  oauth2_access_token: \"b\"\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			if err := os.WriteFile(path, []byte(tt.content), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := SaveOAuth2Tokens(path, "new-access", "new-refresh"); err == nil {
+				t.Error("SaveOAuth2Tokens() = nil, want error on duplicate keys")
+			}
+			if _, err := Load(path); err == nil {
+				t.Error("Load() = nil, want error on duplicate keys")
+			}
+		})
 	}
 }
 

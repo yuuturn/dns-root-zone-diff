@@ -3,6 +3,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -80,5 +81,44 @@ func TestAnchorStoreSaveLoad(t *testing.T) {
 	data, err := s.Load()
 	if err != nil || string(data) != "<TrustAnchor/>" {
 		t.Fatalf("Load() = %q, %v", data, err)
+	}
+}
+
+func TestSaveLeavesNoTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	if err := s.Save([]byte("data")); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".tmp-") {
+			t.Errorf("temp file left after Save: %s", e.Name())
+		}
+	}
+}
+
+func TestSaveRenameErrorCleansTemp(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	// s.path をディレクトリにすると os.Rename が失敗する (EISDIR/ENOTDIR)。
+	// エラーパスでも一時ファイルが残らないことを検証する。
+	if err := os.Mkdir(s.path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Save([]byte("data")); err == nil {
+		t.Fatal("Save() = nil, want rename error")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".tmp-") {
+			t.Errorf("temp file left after failed Save: %s", e.Name())
+		}
 	}
 }
