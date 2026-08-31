@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VPS="vps1.xsv.yfujii.net"
+VPS="vps1.osk.skr.yfujii.net"
 BINARY="dns-root-diff"
 REMOTE_BIN="/usr/local/bin/${BINARY}"
 SERVICE="${BINARY}.service"
