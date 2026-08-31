@@ -14,7 +14,7 @@ https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2
 - バージョン: 1.26.5
 - リモートリポジトリ: GitHub (https://github.com/yuuturn/dns-root-zone-diff)
 - Go module: `github.com/yfujii/dns-root-diff` (リポジトリ名 `dns-root-zone-diff` と異なるので注意)
-- デプロイ先: VPS (vps1.xsv.yfujii.net, Rocky Linux 10.2, x86_64, systemd 257)
+- デプロイ先: VPS (vps1.osk.skr.yfujii.net, Ubuntu 24.04 LTS, x86_64, systemd 255)
 - デプロイ方式: macOS arm64 で GOOS=linux GOARCH=amd64 クロスコンパイル → scp → systemd
 - 開発手法: TDD (テスト駆動開発)
 - フォーマッター / Linter / 型チェック: golangci-lint v2, go vet, gofmt
