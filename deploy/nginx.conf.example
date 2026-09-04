@@ -18,6 +18,17 @@
 # 設定反映:
 #   sudo nginx -t && sudo systemctl reload nginx
 
+# API 応答の共有キャッシュ。conf.d の include は http コンテキスト内なので
+# このファイルに直書きできる。オリジンが返す Cache-Control
+# (一覧: max-age=10 / 詳細: max-age=60) が優先され、失効時は
+# proxy_cache_revalidate により If-None-Match で 304 再検証する。
+# キャッシュディレクトリは nginx 起動時に自動作成される。
+# SELinux enforcing 環境では作成後の型を確認すること
+#   ls -Zd /var/cache/nginx/dns-root-diff  (httpd_cache_t 相当であること)
+proxy_cache_path /var/cache/nginx/dns-root-diff
+                 levels=1:2 keys_zone=dnrdiff_api:10m
+                 max_size=64m inactive=10m use_temp_path=off;
+
 server {
     listen 80;
     listen [::]:80;
@@ -41,6 +52,31 @@ server {
 
     ssl_certificate     /etc/letsencrypt/live/dns-root-diff.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/dns-root-diff.example.com/privkey.pem;
+
+    # 圧縮。JS/CSS/JSON は未圧縮だと 550KB 超だが gzip で 1/3 以下になる。
+    gzip on;
+    gzip_vary on;
+    gzip_comp_level 5;
+    gzip_min_length 1024;
+    gzip_types application/json application/javascript text/css image/svg+xml;
+
+    # API (一覧・詳細・死活監視)。ETag / Cache-Control はオリジンが返すので
+    # そのままキャッシュキーに乗る。stale 系はオリジン断時に直前の応答を
+    # 返すための保険 (このデータは読み取り専用なので許容)。
+    location /api/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_cache dnrdiff_api;
+        proxy_cache_valid 200 10s;
+        proxy_cache_revalidate on;
+        proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+        proxy_cache_lock on;
+        add_header X-Cache-Status $upstream_cache_status always;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:8080;
