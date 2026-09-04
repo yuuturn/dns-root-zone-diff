@@ -263,6 +263,9 @@ func detailETag(id, category string, page, perPage int) string {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	// 死活監視はキャッシュさせない。プロキシが stale-on-error で
+	// オリジン停止中も直前の "ok" を返すと監視が迂回されるため。
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

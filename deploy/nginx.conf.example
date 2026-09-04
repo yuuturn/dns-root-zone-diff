@@ -60,7 +60,19 @@ server {
     gzip_min_length 1024;
     gzip_types application/json application/javascript text/css image/svg+xml;
 
-    # API (一覧・詳細・死活監視)。ETag / Cache-Control はオリジンが返すので
+    # 死活監視はキャッシュしない。stale-on-error が効くとオリジン停止中も
+    # 直前の "ok" が返り続け、監視が迂回されるため。
+    # (オリジンも Cache-Control: no-store を返すが、二重に防御する)
+    location = /api/health {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache off;
+    }
+
+    # API (一覧・詳細)。ETag / Cache-Control はオリジンが返すので
     # そのままキャッシュキーに乗る。stale 系はオリジン断時に直前の応答を
     # 返すための保険 (このデータは読み取り専用なので許容)。
     location /api/ {

@@ -417,6 +417,23 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+// TestHealthNoStore は health がキャッシュされないことを保証する。
+// nginx の proxy_cache_use_stale と組み合わせると、キャッシュ可能な health は
+// オリジン停止中も直前の "ok" を返し続け、死活監視を迂回してしまうため。
+func TestHealthNoStore(t *testing.T) {
+	srv := newTestServer(nil)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
+	}
+}
+
 func TestStaticFile(t *testing.T) {
 	srv := newTestServer(nil)
 	defer srv.Close()
