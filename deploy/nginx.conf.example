@@ -54,11 +54,13 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/dns-root-diff.example.com/privkey.pem;
 
     # 圧縮。JS/CSS/JSON は未圧縮だと 550KB 超だが gzip で 1/3 以下になる。
+    # 注意: Go の ServeFileFS は .js を "text/javascript" で返すため、
+    # application/javascript だけだと JS が圧縮されない。両方入れておく。
     gzip on;
     gzip_vary on;
     gzip_comp_level 5;
     gzip_min_length 1024;
-    gzip_types application/json application/javascript text/css image/svg+xml;
+    gzip_types application/json application/javascript text/javascript text/css image/svg+xml;
 
     # 死活監視はキャッシュしない。stale-on-error が効くとオリジン停止中も
     # 直前の "ok" が返り続け、監視が迂回されるため。
