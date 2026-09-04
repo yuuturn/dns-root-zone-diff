@@ -2,8 +2,10 @@
 package web
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"strconv"
@@ -85,6 +87,19 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request, history Hist
 		return
 	}
 
+	// ETag: 一覧の内容が変わったときだけ変わる弱い ETag。
+	// total + 先頭/末尾 ID のハッシュで十分（2時間に1回しか増えない）。
+	etag := listETag(entries)
+	if etag != "" {
+		w.Header().Set("ETag", etag)
+		// 10秒だけ共有キャッシュ可能（nginx proxy_cache 用）
+		w.Header().Set("Cache-Control", "public, max-age=10, must-revalidate")
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
+
 	page := positiveIntParam(r, "page", 1)
 	if page > maxPage {
 		page = maxPage
@@ -122,6 +137,18 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request, history Hist
 	})
 }
 
+func listETag(entries []store.Entry) string {
+	if len(entries) == 0 {
+		return `W/"0"`
+	}
+	h := sha256.New()
+	// total と先頭/末尾 ID を混ぜる。ID は時刻順なのでこれで変化を検知できる。
+	_, _ = fmt.Fprintf(h, "%d|%s|%s", len(entries), entries[0].ID, entries[len(entries)-1].ID)
+	sum := h.Sum(nil)
+	// 短く 16 hex 文字に切り詰め
+	return fmt.Sprintf(`W/"%x"`, sum[:8])
+}
+
 func (s *Server) handleGetDiff(w http.ResponseWriter, r *http.Request) {
 	s.handleGet(w, r, s.history)
 }
@@ -141,6 +168,13 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, history Histo
 		default:
 			writeError(w, http.StatusInternalServerError, "failed to read diff")
 		}
+		return
+	}
+	etag := fmt.Sprintf(`W/"%s"`, entry.ID)
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "public, max-age=60, must-revalidate")
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
 		return
 	}
 	writeJSON(w, http.StatusOK, entry)

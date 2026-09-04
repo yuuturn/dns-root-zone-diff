@@ -195,11 +195,22 @@ func TestHistoryAppendLeavesNoTempFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 1 {
-		t.Fatalf("len(files) = %d, want 1", len(files))
+	// 一時ファイルが残っていないこと。index ファイルは除外して数える。
+	var entryFiles []string
+	for _, f := range files {
+		if strings.HasPrefix(f.Name(), ".tmp-") {
+			t.Errorf("temp file remains: %q", f.Name())
+		}
+		if f.Name() == ".index.json" {
+			continue
+		}
+		entryFiles = append(entryFiles, f.Name())
 	}
-	if files[0].Name() != e.ID+".json" {
-		t.Errorf("file name = %q, want %q", files[0].Name(), e.ID+".json")
+	if len(entryFiles) != 1 {
+		t.Fatalf("len(entryFiles) = %d, want 1 (files=%v)", len(entryFiles), files)
+	}
+	if entryFiles[0] != e.ID+".json" {
+		t.Errorf("file name = %q, want %q", entryFiles[0], e.ID+".json")
 	}
 }
 
