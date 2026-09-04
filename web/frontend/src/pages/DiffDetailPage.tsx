@@ -1,4 +1,14 @@
-import { Banner, Breadcrumbs, Empty, LayerCard, Loader, Table, Tabs, Text } from "@cloudflare/kumo";
+import {
+  Banner,
+  Breadcrumbs,
+  Empty,
+  LayerCard,
+  Loader,
+  Pagination,
+  Table,
+  Tabs,
+  Text,
+} from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
@@ -10,6 +20,9 @@ import {
   type DiffEntry,
 } from "../api.ts";
 import { CategoryBadge, KindBadge, SummaryBadges } from "../components/badges.tsx";
+
+// 詳細 API の既定ページング件数 (サーバ側 defaultDetailPerPage と一致させる)
+const DETAIL_PER_PAGE = 100;
 
 function ChangeTable({ changes }: { changes: Change[] }) {
   if (changes.length === 0) {
@@ -100,15 +113,31 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
   const [entry, setEntry] = useState<DiffEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState("all");
+  const [page, setPage] = useState(1);
   const isAnchors = variant === "anchors";
+
+  // エントリ (id) が変わったらタブとページを初期化する。
+  // render 中の state 調整で行うことで、effect は初期化後の値で 1 回だけ走る。
+  const [prevId, setPrevId] = useState(id);
+  if (prevId !== id) {
+    setPrevId(id);
+    setEntry(null);
+    setError(null);
+    setTab("all");
+    setPage(1);
+  }
 
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
-    setEntry(null);
-    setError(null);
+    // ページ・タブ切替時は前の内容を表示し続け、応答が来たら差し替える
+    // (都度ローダーを出すより体感が良い。順序乱れは cancelled で防ぐ)。
     const fetch = isAnchors ? fetchAnchorDiff : fetchDiff;
-    fetch(id)
+    fetch(id, {
+      category: tab === "all" ? undefined : tab,
+      page: page,
+      perPage: DETAIL_PER_PAGE,
+    })
       .then((resp) => {
         if (!cancelled) setEntry(resp);
       })
@@ -118,7 +147,7 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
     return () => {
       cancelled = true;
     };
-  }, [id, isAnchors]);
+  }, [id, isAnchors, tab, page]);
 
   if (error) {
     return (
@@ -149,8 +178,6 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
   }
 
   const categories = Object.keys(entry.summary.by_category).sort();
-  const visibleChanges =
-    tab === "all" ? entry.changes : entry.changes.filter((c) => c.category === tab);
 
   return (
     <div className="stack">
@@ -201,10 +228,22 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
           })),
         ]}
         value={tab}
-        onValueChange={setTab}
+        onValueChange={(value) => {
+          setTab(value);
+          setPage(1);
+        }}
       />
 
-      <ChangeTable changes={visibleChanges} />
+      <ChangeTable changes={entry.changes} />
+
+      {(entry.total_pages ?? 1) > 1 && (
+        <Pagination
+          page={page}
+          setPage={setPage}
+          perPage={entry.per_page ?? DETAIL_PER_PAGE}
+          totalCount={entry.changes_total ?? entry.summary.total}
+        />
+      )}
     </div>
   );
 }

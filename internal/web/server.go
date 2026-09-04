@@ -20,6 +20,10 @@ const (
 	// maxPage は page * perPage の整数オーバーフローを防ぐための上限。
 	// 実際のエントリ数 (年間数百件) に対して十分大きい。
 	maxPage = 1_000_000
+	// defaultDetailPerPage は diff 詳細 API で changes を区切る既定件数。
+	// 最近の zone diff は 1 エントリあたり 5000 件超になるため、詳細は
+	// 常にページングして転送量と描画コストを抑える。
+	defaultDetailPerPage = 100
 )
 
 // HistoryReader は Server が必要とする履歴の読み取り操作。
@@ -170,14 +174,92 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, history Histo
 		}
 		return
 	}
-	etag := fmt.Sprintf(`W/"%s"`, entry.ID)
+
+	// 詳細 API は category / page / per_page で changes を絞り込み・分割できる。
+	// page か per_page が指定されたときだけページング応答 (changes_total 等を追加) にし、
+	// 指定なしのときは従来どおり全件を返す。
+	query := r.URL.Query()
+	category := query.Get("category")
+	paged := query.Has("page") || query.Has("per_page")
+
+	page, perPage := 1, 0
+	if paged {
+		page = positiveIntParam(r, "page", 1)
+		if page > maxPage {
+			page = maxPage
+		}
+		perPage = positiveIntParam(r, "per_page", defaultDetailPerPage)
+		if perPage > maxPerPage {
+			perPage = maxPerPage
+		}
+	}
+
+	// ETag はリクエストバリアント (category/page/per_page) ごとに変わる必要がある。
+	// ID は内容不変 (追記のみ) を前提に、パラメータを混ぜたハッシュを使う。
+	etag := detailETag(entry.ID, category, page, perPage)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "public, max-age=60, must-revalidate")
 	if r.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	writeJSON(w, http.StatusOK, entry)
+
+	changes := entry.Changes
+	if category != "" {
+		filtered := make([]store.ChangeJSON, 0, len(changes))
+		for _, c := range changes {
+			if c.Category == category {
+				filtered = append(filtered, c)
+			}
+		}
+		changes = filtered
+	}
+
+	if !paged {
+		entry.Changes = changes
+		writeJSON(w, http.StatusOK, entry)
+		return
+	}
+
+	start := (page - 1) * perPage
+	if start > len(changes) {
+		start = len(changes)
+	}
+	end := start + perPage
+	if end > len(changes) {
+		end = len(changes)
+	}
+
+	totalPages := 0
+	if len(changes) > 0 {
+		totalPages = (len(changes) + perPage - 1) / perPage
+	}
+
+	entry.Changes = changes[start:end]
+	writeJSON(w, http.StatusOK, detailResponse{
+		Entry:        entry,
+		ChangesTotal: len(changes),
+		Page:         page,
+		PerPage:      perPage,
+		TotalPages:   totalPages,
+	})
+}
+
+// detailResponse はページング時の diff 詳細応答。store.Entry を埋め込むことで
+// changes とページングメタ情報を併せて返す。
+type detailResponse struct {
+	store.Entry
+	ChangesTotal int `json:"changes_total"`
+	Page         int `json:"page"`
+	PerPage      int `json:"per_page"`
+	TotalPages   int `json:"total_pages"`
+}
+
+func detailETag(id, category string, page, perPage int) string {
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "%s|%s|%d|%d", id, category, page, perPage)
+	sum := h.Sum(nil)
+	return fmt.Sprintf(`W/"%x"`, sum[:8])
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
