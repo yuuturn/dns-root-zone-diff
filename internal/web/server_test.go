@@ -180,6 +180,216 @@ func TestGetDiff(t *testing.T) {
 	}
 }
 
+// detailTestEntry は詳細ページングのテスト用に 200 changes を持つエントリを生成する。
+// 最初の 150 件は signature、残り 50 件は delegation。
+func detailTestEntry() store.Entry {
+	changes := make([]store.ChangeJSON, 0, 200)
+	for i := 0; i < 200; i++ {
+		category := "signature"
+		if i >= 150 {
+			category = "delegation"
+		}
+		changes = append(changes, store.ChangeJSON{
+			Kind:     "added",
+			Category: category,
+			Name:     fmt.Sprintf("node%03d.example.", i),
+			Type:     "A",
+			NewTTL:   u32ptr(300),
+			NewRData: "1.2.3.4",
+		})
+	}
+	return store.Entry{
+		ID:         "20260701T060000Z-2026070100",
+		DetectedAt: time.Date(2026, 7, 1, 6, 0, 0, 0, time.UTC),
+		OldSerial:  "old",
+		NewSerial:  "new",
+		Summary: store.Summary{
+			Total:      200,
+			Added:      200,
+			ByCategory: map[string]int{"signature": 150, "delegation": 50},
+		},
+		Changes: changes,
+	}
+}
+
+func TestGetDiffDetailPagination(t *testing.T) {
+	entry := detailTestEntry()
+	srv := newTestServer([]store.Entry{entry})
+	defer srv.Close()
+
+	body := getJSON(t, srv.URL+"/api/diffs/"+entry.ID+"?page=2&per_page=100", http.StatusOK)
+	if body["id"] != entry.ID {
+		t.Errorf("id = %v", body["id"])
+	}
+	if body["changes_total"].(float64) != 200 {
+		t.Errorf("changes_total = %v, want 200", body["changes_total"])
+	}
+	if body["page"].(float64) != 2 || body["per_page"].(float64) != 100 {
+		t.Errorf("page=%v per_page=%v, want 2/100", body["page"], body["per_page"])
+	}
+	if body["total_pages"].(float64) != 2 {
+		t.Errorf("total_pages = %v, want 2", body["total_pages"])
+	}
+	changes := body["changes"].([]any)
+	if len(changes) != 100 {
+		t.Fatalf("len(changes) = %d, want 100", len(changes))
+	}
+	first := changes[0].(map[string]any)
+	if first["name"] != "node100.example." {
+		t.Errorf("changes[0].name = %v, want node100.example.", first["name"])
+	}
+
+	// 範囲外ページは空リスト (total などのメタ情報は維持)
+	body = getJSON(t, srv.URL+"/api/diffs/"+entry.ID+"?page=99&per_page=100", http.StatusOK)
+	if len(body["changes"].([]any)) != 0 {
+		t.Error("out-of-range page should return empty changes")
+	}
+	if body["changes_total"].(float64) != 200 {
+		t.Errorf("changes_total = %v, want 200", body["changes_total"])
+	}
+}
+
+func TestGetDiffDetailCategoryPagination(t *testing.T) {
+	entry := detailTestEntry()
+	srv := newTestServer([]store.Entry{entry})
+	defer srv.Close()
+
+	body := getJSON(t, srv.URL+"/api/diffs/"+entry.ID+"?category=signature&page=2&per_page=100", http.StatusOK)
+	if body["changes_total"].(float64) != 150 {
+		t.Errorf("changes_total = %v, want 150", body["changes_total"])
+	}
+	if body["total_pages"].(float64) != 2 {
+		t.Errorf("total_pages = %v, want 2", body["total_pages"])
+	}
+	changes := body["changes"].([]any)
+	if len(changes) != 50 {
+		t.Fatalf("len(changes) = %d, want 50", len(changes))
+	}
+	for i, c := range changes {
+		if got := c.(map[string]any)["category"]; got != "signature" {
+			t.Fatalf("changes[%d].category = %v, want signature", i, got)
+		}
+	}
+	first := changes[0].(map[string]any)
+	if first["name"] != "node100.example." {
+		t.Errorf("changes[0].name = %v, want node100.example.", first["name"])
+	}
+}
+
+func TestGetDiffDetailCategoryOnly(t *testing.T) {
+	entry := detailTestEntry()
+	srv := newTestServer([]store.Entry{entry})
+	defer srv.Close()
+
+	// page/per_page を指定しない場合は従来どおり全件 (フィルタのみ適用)
+	body := getJSON(t, srv.URL+"/api/diffs/"+entry.ID+"?category=delegation", http.StatusOK)
+	changes := body["changes"].([]any)
+	if len(changes) != 50 {
+		t.Fatalf("len(changes) = %d, want 50", len(changes))
+	}
+	if _, ok := body["changes_total"]; ok {
+		t.Error("non-paged response should not include changes_total")
+	}
+}
+
+func TestGetDiffDetailInvalidParams(t *testing.T) {
+	entry := detailTestEntry()
+	srv := newTestServer([]store.Entry{entry})
+	defer srv.Close()
+
+	// 不正パラメータはデフォルトに補正、per_page は上限 100 にクランプ
+	body := getJSON(t, srv.URL+"/api/diffs/"+entry.ID+"?page=abc&per_page=5000", http.StatusOK)
+	if body["page"].(float64) != 1 {
+		t.Errorf("page = %v, want 1", body["page"])
+	}
+	if body["per_page"].(float64) != 100 {
+		t.Errorf("per_page = %v, want 100 (clamped)", body["per_page"])
+	}
+	changes := body["changes"].([]any)
+	if len(changes) != 100 {
+		t.Errorf("len(changes) = %d, want 100", len(changes))
+	}
+
+	// 巨大な page 値でも panic せず空リスト
+	body = getJSON(t, srv.URL+"/api/diffs/"+entry.ID+"?page=9223372036854775807&per_page=100", http.StatusOK)
+	if len(body["changes"].([]any)) != 0 {
+		t.Error("huge page should return empty changes")
+	}
+}
+
+func TestGetDiffDetailETagPerVariant(t *testing.T) {
+	entry := detailTestEntry()
+	srv := newTestServer([]store.Entry{entry})
+	defer srv.Close()
+
+	url1 := srv.URL + "/api/diffs/" + entry.ID + "?page=1&per_page=100"
+	url2 := srv.URL + "/api/diffs/" + entry.ID + "?page=2&per_page=100"
+
+	etag1 := getETag(t, url1)
+	etag2 := getETag(t, url2)
+	if etag1 == "" || etag2 == "" {
+		t.Fatal("ETag missing")
+	}
+	if etag1 == etag2 {
+		t.Errorf("ETag should differ between page variants: %s", etag1)
+	}
+
+	// 別ページの ETag を送っても 304 にはならない
+	req, _ := http.NewRequest("GET", url2, nil)
+	req.Header.Set("If-None-Match", etag1)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status with mismatched ETag = %d, want 200", resp.StatusCode)
+	}
+
+	// 一致する ETag なら 304
+	req, _ = http.NewRequest("GET", url2, nil)
+	req.Header.Set("If-None-Match", etag2)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNotModified {
+		t.Errorf("status with matched ETag = %d, want 304", resp.StatusCode)
+	}
+}
+
+func getETag(t *testing.T, url string) string {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s status = %d, want %d", url, resp.StatusCode, http.StatusOK)
+	}
+	return resp.Header.Get("ETag")
+}
+
+func TestGetAnchorDiffDetailPagination(t *testing.T) {
+	entry := detailTestEntry()
+	srv := newTestServerWithAnchors(nil, []store.Entry{entry})
+	defer srv.Close()
+
+	body := getJSON(t, srv.URL+"/api/anchors/diffs/"+entry.ID+"?category=delegation&page=1&per_page=10", http.StatusOK)
+	if body["changes_total"].(float64) != 50 {
+		t.Errorf("changes_total = %v, want 50", body["changes_total"])
+	}
+	if body["total_pages"].(float64) != 5 {
+		t.Errorf("total_pages = %v, want 5", body["total_pages"])
+	}
+	changes := body["changes"].([]any)
+	if len(changes) != 10 {
+		t.Fatalf("len(changes) = %d, want 10", len(changes))
+	}
+}
+
 func TestGetDiffNotFound(t *testing.T) {
 	srv := newTestServer(testEntries(1))
 	defer srv.Close()
@@ -204,6 +414,23 @@ func TestHealth(t *testing.T) {
 	body := getJSON(t, srv.URL+"/api/health", http.StatusOK)
 	if body["status"] != "ok" {
 		t.Errorf("status = %v, want ok", body["status"])
+	}
+}
+
+// TestHealthNoStore は health がキャッシュされないことを保証する。
+// nginx の proxy_cache_use_stale と組み合わせると、キャッシュ可能な health は
+// オリジン停止中も直前の "ok" を返し続け、死活監視を迂回してしまうため。
+func TestHealthNoStore(t *testing.T) {
+	srv := newTestServer(nil)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
 }
 

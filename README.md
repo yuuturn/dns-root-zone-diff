@@ -180,10 +180,12 @@ Setting `web.enabled: true` starts a web server that lets you browse diff histor
 
 - `GET /` : list and detail views (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo)), switchable via the Root Zone / Root Anchors tabs
 - `GET /api/diffs?page=1&per_page=20` : root zone diff history list
-- `GET /api/diffs/{id}` : root zone diff detail
+- `GET /api/diffs/{id}` : root zone diff detail. Optional query params: `category=<name>` filters changes by category, and `page` / `per_page` (default 100, max 100) paginate them — when paging params are present the response also carries `changes_total` and `total_pages`
 - `GET /api/anchors/diffs?page=1&per_page=20` : root anchors diff history list
-- `GET /api/anchors/diffs/{id}` : root anchors diff detail
+- `GET /api/anchors/diffs/{id}` : root anchors diff detail (same optional params as above)
 - `GET /api/health` : health check
+
+List and detail responses carry `ETag` headers; requests with a matching `If-None-Match` are answered with `304 Not Modified`.
 
 The frontend build artifacts are committed under `internal/web/static/` and embedded into the binary via go:embed, so ordinary builds and deploys do not require Node.js. If you modify the frontend (`web/frontend/`), rebuild and commit the artifacts together:
 

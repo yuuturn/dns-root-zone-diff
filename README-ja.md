@@ -202,10 +202,12 @@ make build
 
 - `GET /` : 一覧・詳細画面 (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))。Root Zone / Root Anchors のタブで切り替え
 - `GET /api/diffs?page=1&per_page=20` : root zone の diff 履歴一覧
-- `GET /api/diffs/{id}` : root zone の diff 詳細
+- `GET /api/diffs/{id}` : root zone の diff 詳細。オプションで `category=<名前>` でカテゴリ絞り込み、`page` / `per_page` (既定 100、上限 100) で changes をページングできる。ページング時は応答に `changes_total` / `total_pages` が追加される
 - `GET /api/anchors/diffs?page=1&per_page=20` : root anchors の diff 履歴一覧
-- `GET /api/anchors/diffs/{id}` : root anchors の diff 詳細
+- `GET /api/anchors/diffs/{id}` : root anchors の diff 詳細 (上記と同じオプション付き)
 - `GET /api/health` : 死活監視
+
+一覧・詳細 API は `ETag` を返し、一致する `If-None-Match` 付きリクエストには `304 Not Modified` で応答する。
 
 フロントエンドのビルド成果物は `internal/web/static/` にコミットされ、go:embed で
 バイナリに埋め込まれるため、通常のビルド・デプロイに Node.js は不要。
