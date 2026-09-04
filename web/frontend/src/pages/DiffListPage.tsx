@@ -99,7 +99,10 @@ export function DiffListPage() {
         </Table>
       </LayerCard>
       {data.total > PER_PAGE && (
-        <Pagination page={page} setPage={setPage} perPage={PER_PAGE} totalCount={data.total} />
+        <Pagination page={page} setPage={setPage} perPage={PER_PAGE} totalCount={data.total}>
+          <Pagination.Info />
+          <Pagination.Controls />
+        </Pagination>
       )}
     </div>
   );

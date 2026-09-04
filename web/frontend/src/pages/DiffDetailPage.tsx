@@ -242,7 +242,10 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
           setPage={setPage}
           perPage={entry.per_page ?? DETAIL_PER_PAGE}
           totalCount={entry.changes_total ?? entry.summary.total}
-        />
+        >
+          <Pagination.Info />
+          <Pagination.Controls />
+        </Pagination>
       )}
     </div>
   );
