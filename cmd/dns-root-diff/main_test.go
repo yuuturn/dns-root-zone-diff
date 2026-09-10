@@ -296,6 +296,46 @@ func TestRunOnceNotifiesSubstantiveChanges(t *testing.T) {
 	}
 }
 
+func TestRunOnceSkipsNotifyForFirstRun(t *testing.T) {
+	// 初回実行 (前回スナップショットなし) は全レコードが added になるため、
+	// anchors と同様に通知も履歴も行わない。
+	zoneData := ".\t86400\tIN\tNS\ta.root-servers.net.\n"
+
+	zoneSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(zoneData))
+	}))
+	defer zoneSrv.Close()
+
+	var mu sync.Mutex
+	var notified int
+	slack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		notified++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer slack.Close()
+
+	cfg := config.Config{
+		ZoneURL: zoneSrv.URL,
+		DataDir: t.TempDir(),
+		Slack:   config.SlackConfig{Enabled: true, WebhookURL: slack.URL},
+	}
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatalf("runOnce() error = %v", err)
+	}
+
+	mu.Lock()
+	got := notified
+	mu.Unlock()
+	if got != 0 {
+		t.Errorf("notified %d times on first run, want 0 (all records added)", got)
+	}
+	if entries, _ := store.NewHistory(cfg.DataDir).List(); len(entries) != 0 {
+		t.Errorf("history after first run = %d entries, want 0", len(entries))
+	}
+}
+
 func TestRunLoopWebListenError(t *testing.T) {
 	// 先にポートを占有して web サーバーの listen を失敗させる
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -394,8 +434,8 @@ func TestRunOnceAnchorDetectsAndNotifies(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		var payload map[string]string
 		_ = json.Unmarshal(body, &payload)
-		// zone フローは初回実行時に全レコードを added として通知するため、
-		// anchor 通知 (タイトルで判別) だけを数える。
+		// zone / anchors とも初回実行では通知しない。2 回目は zone に変更が無いため
+		// anchor 通知 (タイトルで判別) だけが Slack に届く。
 		if strings.HasPrefix(payload["text"], "DNS Root Anchors changes") {
 			mu.Lock()
 			anchorTexts = append(anchorTexts, payload["text"])

@@ -1,7 +1,7 @@
 .PHONY: build build-linux test lint fmt vet secrets ci clean deploy frontend-install frontend-build frontend-check
 
 BINARY       := dns-root-diff
-VPS          := vps1.xsv.yfujii.net
+VPS          := vps1.osk.skr.yfujii.net
 FRONTEND_DIR := web/frontend
 
 build:

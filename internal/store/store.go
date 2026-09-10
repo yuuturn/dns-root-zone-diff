@@ -33,12 +33,33 @@ func NewAnchor(dir string) *Store {
 }
 
 // Save はゾーンデータをファイルに保存する。
+// 一時ファイルに書いてから rename することで、クラッシュ・ディスクフル時に
+// スナップショットが部分書き込みで破損するのを防ぐ (History.Append と同じ方式)。
 func (s *Store) Save(data []byte) error {
 	if err := os.MkdirAll(s.dir, 0755); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
 	}
-	if err := os.WriteFile(s.path, data, 0644); err != nil {
-		return fmt.Errorf("write zone file: %w", err)
+	tmp, err := os.CreateTemp(s.dir, ".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("write snapshot: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("close snapshot file: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0644); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("chmod snapshot file: %w", err)
+	}
+	if err := os.Rename(tmpName, s.path); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("rename snapshot file: %w", err)
 	}
 	return nil
 }

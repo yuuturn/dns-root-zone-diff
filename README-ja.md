@@ -97,6 +97,9 @@ SOA serial と ZONEMD の serial/digest も更新される。この**機械的�
 (差分5,000件超になる) だけの回は **Slack / X へ通知しない**。Web UI には全件が
 履歴として残る。
 
+初回実行 (前回スナップショットなし) はベースラインとしてスナップショット保存のみ
+行い、通知・履歴記録はしない (全レコードが added として通知されるのを防ぐため)。
+
 機械的な変更かどうかは RR type ではなく**旧新の対応付け**で判定する。RRset が複数
 レコードを持つ場合、差分は modified に畳まれず removed + added に分解されるため、
 再署名では変わらないフィールドと TTL でレコードの組を作り、組になったものだけを
@@ -199,10 +202,12 @@ make build
 
 - `GET /` : 一覧・詳細画面 (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))。Root Zone / Root Anchors のタブで切り替え
 - `GET /api/diffs?page=1&per_page=20` : root zone の diff 履歴一覧
-- `GET /api/diffs/{id}` : root zone の diff 詳細
+- `GET /api/diffs/{id}` : root zone の diff 詳細。オプションで `category=<名前>` でカテゴリ絞り込み、`page` / `per_page` (既定 100、上限 100) で changes をページングできる。ページング時は応答に `changes_total` / `total_pages` が追加される
 - `GET /api/anchors/diffs?page=1&per_page=20` : root anchors の diff 履歴一覧
-- `GET /api/anchors/diffs/{id}` : root anchors の diff 詳細
+- `GET /api/anchors/diffs/{id}` : root anchors の diff 詳細 (上記と同じオプション付き)
 - `GET /api/health` : 死活監視
+
+一覧・詳細 API は `ETag` を返し、一致する `If-None-Match` 付きリクエストには `304 Not Modified` で応答する。
 
 フロントエンドのビルド成果物は `internal/web/static/` にコミットされ、go:embed で
 バイナリに埋め込まれるため、通常のビルド・デプロイに Node.js は不要。

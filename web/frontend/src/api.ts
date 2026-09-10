@@ -27,6 +27,11 @@ export interface Change {
 
 export interface DiffEntry extends DiffSummary {
   changes: Change[];
+  /** ページング時のみ返される。フィルタ適用後の全 changes 件数 */
+  changes_total?: number;
+  page?: number;
+  per_page?: number;
+  total_pages?: number;
 }
 
 export interface DiffListResponse {
@@ -34,6 +39,12 @@ export interface DiffListResponse {
   total: number;
   page: number;
   per_page: number;
+}
+
+export interface DetailQuery {
+  category?: string;
+  page?: number;
+  perPage?: number;
 }
 
 async function getJSON<T>(url: string): Promise<T> {
@@ -51,12 +62,24 @@ async function getJSON<T>(url: string): Promise<T> {
   return (await resp.json()) as T;
 }
 
+function detailQueryString(query?: DetailQuery): string {
+  if (!query) return "";
+  const params = new URLSearchParams();
+  if (query.category && query.category !== "all") {
+    params.set("category", query.category);
+  }
+  if (query.page !== undefined) params.set("page", String(query.page));
+  if (query.perPage !== undefined) params.set("per_page", String(query.perPage));
+  const s = params.toString();
+  return s ? `?${s}` : "";
+}
+
 export function fetchDiffs(page: number, perPage: number): Promise<DiffListResponse> {
   return getJSON(`/api/diffs?page=${page}&per_page=${perPage}`);
 }
 
-export function fetchDiff(id: string): Promise<DiffEntry> {
-  return getJSON(`/api/diffs/${encodeURIComponent(id)}`);
+export function fetchDiff(id: string, query?: DetailQuery): Promise<DiffEntry> {
+  return getJSON(`/api/diffs/${encodeURIComponent(id)}${detailQueryString(query)}`);
 }
 
 // root anchors の差分は zone と JSON 形状が同じ (serial フィールドに TrustAnchor id が入る)。
@@ -64,8 +87,8 @@ export function fetchAnchorDiffs(page: number, perPage: number): Promise<DiffLis
   return getJSON(`/api/anchors/diffs?page=${page}&per_page=${perPage}`);
 }
 
-export function fetchAnchorDiff(id: string): Promise<DiffEntry> {
-  return getJSON(`/api/anchors/diffs/${encodeURIComponent(id)}`);
+export function fetchAnchorDiff(id: string, query?: DetailQuery): Promise<DiffEntry> {
+  return getJSON(`/api/anchors/diffs/${encodeURIComponent(id)}${detailQueryString(query)}`);
 }
 
 export function formatDetectedAt(iso: string): string {

@@ -94,6 +94,8 @@ Detected changes are categorized by RR type.
 
 The root zone is re-signed every 12 hours, at which point about 2,800 RRSIG records are replaced and the SOA serial and ZONEMD serial/digest are also updated. Runs that consist **only** of this **mechanical change** (over 5,000 diffs) are **not notified to Slack/X**. The full history is retained in the Web UI.
 
+The first run (no previous snapshot) only saves a baseline snapshot; no notification or history is recorded, since every record would otherwise be reported as added.
+
 Whether a change is mechanical is determined not by RR type but by **pairing old and new records**. Because an RRset with multiple records is decomposed into removed + added (not folded into a "modified" diff), re-signing pairs records by their unchanged fields and TTL, and only unpaired records are treated as mechanical changes.
 
 | RR type | Fields used for pairing | Fields allowed to change |
@@ -178,10 +180,12 @@ Setting `web.enabled: true` starts a web server that lets you browse diff histor
 
 - `GET /` : list and detail views (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo)), switchable via the Root Zone / Root Anchors tabs
 - `GET /api/diffs?page=1&per_page=20` : root zone diff history list
-- `GET /api/diffs/{id}` : root zone diff detail
+- `GET /api/diffs/{id}` : root zone diff detail. Optional query params: `category=<name>` filters changes by category, and `page` / `per_page` (default 100, max 100) paginate them — when paging params are present the response also carries `changes_total` and `total_pages`
 - `GET /api/anchors/diffs?page=1&per_page=20` : root anchors diff history list
-- `GET /api/anchors/diffs/{id}` : root anchors diff detail
+- `GET /api/anchors/diffs/{id}` : root anchors diff detail (same optional params as above)
 - `GET /api/health` : health check
+
+List and detail responses carry `ETag` headers; requests with a matching `If-None-Match` are answered with `304 Not Modified`.
 
 The frontend build artifacts are committed under `internal/web/static/` and embedded into the binary via go:embed, so ordinary builds and deploys do not require Node.js. If you modify the frontend (`web/frontend/`), rebuild and commit the artifacts together:
 
