@@ -200,8 +200,9 @@ type block struct {
 // FormatPosts は変更内容を MaxLen 以内のパーツ列にフォーマットする。
 // 実質的な変更 (再署名に伴う機械的変更を除いたもの) が無い場合は nil を返す。
 //
-// 明細はまずレコード単位で組み、MaxParts に収まらない場合や 1行が長すぎて明細を
-// 落とす場合は TLD ごとの集約に切り替える。それでも収まらない場合は MaxParts で
+// 明細はまずレコード単位で組み、MaxParts に収まらない場合は RDATA を短縮した
+// レコード単位に切り替える。それでも 1行が長すぎて明細を落とす場合や収まらない
+// 場合は TLD ごとの集約に切り替える。最後まで収まらない場合は MaxParts で
 // 打ち切り、末尾に落とした件数を明記する。
 func FormatPosts(changes []diff.Change, opts FormatOptions) []string {
 	if opts.MaxLen <= 0 {
@@ -214,7 +215,7 @@ func FormatPosts(changes []diff.Change, opts FormatOptions) []string {
 
 	overview := overviewBlock(changes, sub, opts.CompactOverview)
 
-	for _, detail := range [][]block{recordBlocks(sub, opts), aggregatedBlocks(sub, opts)} {
+	for _, detail := range [][]block{recordBlocks(sub, opts), shortRecordBlocks(sub), aggregatedBlocks(sub, opts)} {
 		parts, dropped := pack(append([]block{overview}, detail...), opts, 0)
 		// 1件も落とさずに MaxParts に収まった候補だけを採用する。
 		if dropped == 0 && (opts.MaxParts <= 0 || len(parts) <= opts.MaxParts) {
@@ -285,6 +286,19 @@ func soaSerials(changes []diff.Change) (oldSerial, newSerial string, ok bool) {
 
 // recordBlocks はレコード単位の明細ブロックをカテゴリごとに組み立てる。
 func recordBlocks(sub []diff.Change, opts FormatOptions) []block {
+	return buildRecordBlocks(sub, func(c diff.Change) string {
+		return formatChange(c, opts.rdataMaxLen())
+	})
+}
+
+// shortRecordBlocks は RDATA を短縮したレコード単位の明細ブロックを組み立てる。
+// フル RDATA が上限に収まらない場合の第一のフォールバック。
+func shortRecordBlocks(sub []diff.Change) []block {
+	return buildRecordBlocks(sub, formatChangeShort)
+}
+
+// buildRecordBlocks は render で各行を組み立てつつカテゴリごとのブロックを作る。
+func buildRecordBlocks(sub []diff.Change, render func(diff.Change) string) []block {
 	grouped := diff.CategorizeChanges(sub)
 	var blocks []block
 	for _, cat := range diff.Categories() {
@@ -294,7 +308,7 @@ func recordBlocks(sub []diff.Change, opts FormatOptions) []block {
 		}
 		lines := make([]detailLine, 0, len(catChanges))
 		for _, c := range catChanges {
-			lines = append(lines, detailLine{text: formatChange(c, opts.rdataMaxLen()), count: 1})
+			lines = append(lines, detailLine{text: render(c), count: 1})
 		}
 		blocks = append(blocks, block{heading: heading(cat), lines: lines})
 	}
@@ -327,11 +341,21 @@ func heading(cat diff.Category) string {
 // formatChange はレコード単位の明細行を組み立てる。
 // rdataMaxLen は RDATA の表示上限 (truncate する文字数)。
 func formatChange(c diff.Change, rdataMaxLen int) string {
+	return formatChangeWith(c, func(s string) string { return truncate(s, rdataMaxLen) })
+}
+
+// formatChangeShort は RDATA を短縮したレコード単位の明細行を組み立てる。
+func formatChangeShort(c diff.Change) string {
+	return formatChangeWith(c, func(s string) string { return shortRData(s, c.Type) })
+}
+
+// formatChangeWith は RDATA の変換関数を差し替えてレコード単位の明細行を組み立てる。
+func formatChangeWith(c diff.Change, rdata func(string) string) string {
 	switch c.Kind {
 	case diff.ChangeAdded:
-		return fmt.Sprintf("  + %s %s %s", c.Name, c.Type, truncate(c.NewRData, rdataMaxLen))
+		return fmt.Sprintf("  + %s %s %s", c.Name, c.Type, rdata(c.NewRData))
 	case diff.ChangeRemoved:
-		return fmt.Sprintf("  - %s %s %s", c.Name, c.Type, truncate(c.OldRData, rdataMaxLen))
+		return fmt.Sprintf("  - %s %s %s", c.Name, c.Type, rdata(c.OldRData))
 	case diff.ChangeModified:
 		ttl := ""
 		if c.OldTTL != c.NewTTL {
@@ -342,7 +366,7 @@ func formatChange(c diff.Change, rdataMaxLen int) string {
 			return fmt.Sprintf("  ~ %s %s %s", c.Name, c.Type, ttl)
 		}
 		line := fmt.Sprintf("  ~ %s %s %s -> %s", c.Name, c.Type,
-			truncate(c.OldRData, rdataMaxLen), truncate(c.NewRData, rdataMaxLen))
+			rdata(c.OldRData), rdata(c.NewRData))
 		if ttl != "" {
 			// RDATA と TTL が同時に変わった場合は両方伝える。
 			line += " (" + ttl + ")"
@@ -351,6 +375,32 @@ func formatChange(c diff.Change, rdataMaxLen int) string {
 	default:
 		return ""
 	}
+}
+
+// shortRDataFields は短縮 RDATA で残す先頭フィールド数を RR type ごとに定義する。
+// DS 系は DNSKEY を特定する key tag / algorithm / digest type まで、
+// RRSIG は type covered / algorithm / labels / original TTL まで残す。
+var shortRDataFields = map[string]int{
+	"DS":      3, // key tag / algorithm / digest type
+	"CDS":     3,
+	"DNSKEY":  3, // flags / protocol / algorithm
+	"CDNSKEY": 3,
+	"RRSIG":   4, // type covered / algorithm / labels / original TTL
+}
+
+// shortRData は RDATA の先頭フィールドだけを残し、残りを " ..." で示す。
+// フィールド数が上限以下ならそのまま返す (NS のネームサーバ名や A/AAAA の
+// アドレスのように、先頭フィールド自体がレコードの識別子になっている型がある)。
+func shortRData(rdata, rrType string) string {
+	fields := strings.Fields(rdata)
+	n := shortRDataFields[rrType]
+	if n <= 0 {
+		n = 1
+	}
+	if len(fields) <= n {
+		return strings.Join(fields, " ")
+	}
+	return strings.Join(fields[:n], " ") + " ..."
 }
 
 // formatTLDGroup は TLD 集約の明細行を組み立てる ("  example. NS +1 -1 ~1")。

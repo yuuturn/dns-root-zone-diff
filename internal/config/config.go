@@ -10,7 +10,9 @@ import (
 )
 
 // defaultTwitterMaxPosts は1回の検知で連投する最大ツイート数のデフォルト。
-const defaultTwitterMaxPosts = 4
+// RDATA を短縮したレコード単位明細 (DS 系は key tag / algorithm / digest type まで)
+// が収まるよう、集約にフォールバックしにくい値にしている。
+const defaultTwitterMaxPosts = 6
 
 // defaultBlueskyMaxPostChars は BlueSky 投稿の最大文字数デフォルト。
 const defaultBlueskyMaxPostChars = 300

@@ -375,6 +375,165 @@ func TestFormatPostsFallsBackToTLDAggregation(t *testing.T) {
 	}
 }
 
+func TestShortRData(t *testing.T) {
+	tests := []struct {
+		rrType string
+		in     string
+		want   string
+	}{
+		// DS 系は DNSKEY を特定する key tag / algorithm / digest type まで残す。
+		{"DS", "46645 13 2 A4DD7495AEA086F4602ACF3932BADDAABBC", "46645 13 2 ..."},
+		{"CDS", "46645 13 2 A4DD7495AEA0", "46645 13 2 ..."},
+		{"DNSKEY", "257 3 13 mdsswUyr3DPW", "257 3 13 ..."},
+		{"CDNSKEY", "257 3 13 mdsswUyr3DPW", "257 3 13 ..."},
+		// RRSIG は type covered / algorithm / labels / original TTL まで残す。
+		{"RRSIG", "DS 8 1 86400 20260806050000 20260724040000 57780 . sig", "DS 8 1 86400 ..."},
+		// それ以外は先頭フィールドのみ。
+		{"NS", "ns1.dns.nic.gone.", "ns1.dns.nic.gone."},
+		{"A", "192.0.2.1", "192.0.2.1"},
+		{"AAAA", "2001:db8::1", "2001:db8::1"},
+		{"TXT", "v=spf1 include:example.net -all", "v=spf1 ..."},
+		{"UNKNOWN", "foo bar baz", "foo ..."},
+		// フィールド数が上限以下なら省略記号を付けない。
+		{"DS", "46645 13 2", "46645 13 2"},
+		{"NS", "", ""},
+	}
+	for _, tt := range tests {
+		if got := shortRData(tt.in, tt.rrType); got != tt.want {
+			t.Errorf("shortRData(%q, %q) = %q, want %q", tt.in, tt.rrType, got, tt.want)
+		}
+	}
+}
+
+func TestFormatPostsFallsBackToShortRData(t *testing.T) {
+	// レコード単位のフル RDATA (40字) では MaxParts に収まらないが、
+	// DS の短縮 RDATA (key tag / algorithm / digest type) なら収まる件数。
+	var changes []diff.Change
+	for i := 0; i < 20; i++ {
+		changes = append(changes, diff.Change{
+			Kind:     diff.ChangeAdded,
+			Name:     fmt.Sprintf("tld%02d.", i),
+			Type:     "DS",
+			NewRData: fmt.Sprintf("%05d 13 2 %s", 10000+i, strings.Repeat("A", 50)),
+		})
+	}
+	opts := FormatOptions{MaxLen: 280, MaxParts: 4, Numbering: true, Weighted: true, CompactOverview: true}
+	parts := FormatPosts(changes, opts)
+	if len(parts) == 0 || len(parts) > opts.MaxParts {
+		t.Fatalf("got %d parts, want 1..%d:\n%s", len(parts), opts.MaxParts, strings.Join(parts, "\n---\n"))
+	}
+	joined := strings.Join(parts, "\n")
+	if !strings.Contains(joined, "+ tld00. DS 10000 13 2 ...") {
+		t.Errorf("expected short RDATA record line in:\n%s", joined)
+	}
+	// 集約 (TLD ごとの +1) にはフォールバックしない。
+	if strings.Contains(joined, "DS +1") {
+		t.Errorf("should not aggregate when short RDATA fits:\n%s", joined)
+	}
+	if strings.Contains(joined, "more changes") {
+		t.Errorf("nothing should be dropped:\n%s", joined)
+	}
+	for i := 0; i < 20; i++ {
+		if !strings.Contains(joined, fmt.Sprintf("tld%02d. DS", i)) {
+			t.Errorf("missing tld%02d. in:\n%s", i, joined)
+		}
+	}
+	for i, p := range parts {
+		if n := weightedLen(p); n > opts.MaxLen {
+			t.Errorf("part %d is %d weighted chars (> %d):\n%s", i+1, n, opts.MaxLen, p)
+		}
+	}
+}
+
+func TestFormatChangeShortKeepsChangeKinds(t *testing.T) {
+	// 短縮しても追加/削除/変更の別は明細行に残る。
+	tests := []struct {
+		name   string
+		change diff.Change
+		want   string
+	}{
+		{
+			name:   "added",
+			change: diff.Change{Kind: diff.ChangeAdded, Name: "new.", Type: "DS", NewRData: "11111 8 2 " + strings.Repeat("A", 50)},
+			want:   "  + new. DS 11111 8 2 ...",
+		},
+		{
+			name:   "removed",
+			change: diff.Change{Kind: diff.ChangeRemoved, Name: "gone.", Type: "DS", OldRData: "11111 8 2 " + strings.Repeat("A", 50)},
+			want:   "  - gone. DS 11111 8 2 ...",
+		},
+		{
+			name: "modified",
+			change: diff.Change{Kind: diff.ChangeModified, Name: "roll.", Type: "DS",
+				OldRData: "22222 8 2 " + strings.Repeat("A", 50), NewRData: "33333 13 2 " + strings.Repeat("B", 50)},
+			want: "  ~ roll. DS 22222 8 2 ... -> 33333 13 2 ...",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatChangeShort(tt.change); got != tt.want {
+				t.Errorf("formatChangeShort() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatPostsManyDSChangesKeepsRecordDetail(t *testing.T) {
+	// 実投稿相当: DS 変更 38 件。TLD 集約 (tld00. DS +1) ではなく、
+	// 短縮 RDATA のレコード単位明細のまま max_posts に収まること。
+	var changes []diff.Change
+	for i := 0; i < 38; i++ {
+		changes = append(changes, diff.Change{
+			Kind:     diff.ChangeAdded,
+			Name:     fmt.Sprintf("tld%02d.", i),
+			Type:     "DS",
+			NewRData: fmt.Sprintf("%05d 13 2 %s", 10000+i, strings.Repeat("A", 60)),
+		})
+	}
+	opts := FormatOptions{
+		MaxLen: tweetMaxLen, MaxParts: defaultMaxPosts,
+		Numbering: true, Weighted: true, CompactOverview: true,
+	}
+	parts := FormatPosts(changes, opts)
+	if len(parts) == 0 || len(parts) > opts.MaxParts {
+		t.Fatalf("got %d parts, want 1..%d:\n%s", len(parts), opts.MaxParts, strings.Join(parts, "\n---\n"))
+	}
+	joined := strings.Join(parts, "\n")
+	if !strings.Contains(joined, "+ tld00. DS 10000 13 2 ...") {
+		t.Errorf("expected short RDATA record detail in:\n%s", joined)
+	}
+	if strings.Contains(joined, "DS +1") {
+		t.Errorf("should not aggregate such a case:\n%s", joined)
+	}
+	for i := 0; i < 38; i++ {
+		if !strings.Contains(joined, fmt.Sprintf("tld%02d. DS", i)) {
+			t.Errorf("missing tld%02d. in:\n%s", i, joined)
+		}
+	}
+}
+
+func TestFormatPostsAggregatesWhenShortRDataTooLong(t *testing.T) {
+	// 短縮してもなお MaxParts に収まらない大量の DS 変更は TLD 集約に落ちる。
+	var changes []diff.Change
+	for i := 0; i < 100; i++ {
+		changes = append(changes, diff.Change{
+			Kind:     diff.ChangeAdded,
+			Name:     fmt.Sprintf("tld%03d.", i),
+			Type:     "DS",
+			NewRData: fmt.Sprintf("%05d 13 2 %s", 10000+i, strings.Repeat("A", 50)),
+		})
+	}
+	opts := FormatOptions{MaxLen: 280, MaxParts: 3, Numbering: true, Weighted: true, CompactOverview: true}
+	parts := FormatPosts(changes, opts)
+	if len(parts) != 3 {
+		t.Fatalf("got %d parts, want 3:\n%s", len(parts), strings.Join(parts, "\n---\n"))
+	}
+	joined := strings.Join(parts, "\n")
+	if !strings.Contains(joined, "DS +1") {
+		t.Errorf("expected TLD aggregation line in:\n%s", joined)
+	}
+}
+
 // longName は 1行で上限を超える長さの owner name を返す。
 func longName(tld string) string {
 	return "ns1." + strings.Repeat("a", 260) + "." + tld
