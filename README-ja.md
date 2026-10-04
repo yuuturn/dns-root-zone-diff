@@ -47,8 +47,8 @@ twitter:
   api_secret: ""
   access_token: ""
   access_secret: ""
-  # 1回の検知で連投する最大ツイート数 (省略時 4)
-  max_posts: 4
+  # 1回の検知で連投する最大ツイート数 (省略時 6)
+  max_posts: 6
 web:
   enabled: false
   listen: "127.0.0.1:8080"
@@ -140,12 +140,15 @@ re-signing: 2800 RRSIG (omitted)
   + newgtld. DS 12345 8 2 A1B2C3D4E5F60718293A4B5C6D7E8F...
 ```
 
-明細はレコード単位で載せる。上限 (`max_posts`) に収まらない場合は TLD ごとの集約
-(`  example. NS +1 -1`) に切り替え、それでも収まらない場合は末尾に
+明細はまずレコード単位 (RDATA は40文字まで) で載せる。上限 (`max_posts`) に
+収まらない場合は RDATA を先頭フィールドだけに短縮したレコード単位へ切り替える。
+DS 系は DNSKEY を特定できる key tag / algorithm / digest type まで残す
+(`  + newgtld. DS 12345 8 2 ...`)。それでも収まらない場合は TLD ごとの集約
+(`  example. NS +1 -1`) に切り替え、最後まで収まらない場合は末尾に
 `... +N more changes` として落とした件数を明記する。
 
 X は280文字に収めるため、レコード単位の明細を優先して概要の `serial` 行と
-`re-signing` 行を省く:
+`re-signing` 行を省く (デフォルト `max_posts: 6`):
 
 ```
 DNS Root Zone changes (1/2)

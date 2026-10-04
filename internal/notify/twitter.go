@@ -24,7 +24,7 @@ const (
 	// tweetMaxLen は 1ツイートの最大文字数。
 	tweetMaxLen = 280
 	// defaultMaxPosts は 1回の検知で投稿する最大ツイート数のデフォルト。
-	defaultMaxPosts = 4
+	defaultMaxPosts = 6
 	// defaultPostDelay は連投時のツイート間隔 (レート制限対策)。
 	defaultPostDelay = 1 * time.Second
 )
