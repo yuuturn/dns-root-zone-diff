@@ -96,6 +96,12 @@ body {
   max-width: 34rem;
 }
 
+/* DNSKEY / CDNSKEY の注記行。base64 の折り返しに巻き込まれないようにする。 */
+.rdata .key-annotation {
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
 .clickable-row {
   cursor: pointer;
 }
