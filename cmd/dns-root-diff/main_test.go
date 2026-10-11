@@ -493,3 +493,35 @@ func TestRunOnceSkipsAnchorsWhenDisabled(t *testing.T) {
 		t.Error("anchor snapshot must not be created when AnchorURL is empty")
 	}
 }
+
+func TestHTTPSpanName(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		target  string
+		want    string
+	}{
+		{
+			name:    "ServeMux のルートパターンを優先する",
+			pattern: "GET /api/diffs/{id}",
+			target:  "/api/diffs/2026-10-11",
+			want:    "GET /api/diffs/{id}",
+		},
+		{
+			name:   "パターン未設定ならメソッドとパスを使う",
+			target: "/health",
+			want:   "GET /health",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, tt.target, nil)
+			r.Pattern = tt.pattern
+
+			if got := httpSpanName("http.server", r); got != tt.want {
+				t.Errorf("httpSpanName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
