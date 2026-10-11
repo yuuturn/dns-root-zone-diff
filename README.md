@@ -204,6 +204,50 @@ make frontend-build    # outputs to internal/web/static
 
 If you expose it to the internet, a reverse proxy with TLS termination via nginx is recommended. See [deploy/nginx.conf.example](deploy/nginx.conf.example) for an example configuration and SELinux / firewalld steps.
 
+## Tracing (OpenTelemetry)
+
+Traces can be exported over OTLP. Tracing is **disabled by default**: it is enabled only when
+`OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is set (otherwise the
+instrumentation is a no-op).
+
+Instrumented spans:
+
+| Span | Description |
+|---|---|
+| `GET /api/diffs`, ... | Web UI / API requests (low-cardinality route names such as `GET /api/diffs/{id}`) |
+| `run` / `zone.run` / `anchor.run` | One scheduled run (also `-once`), with `zone.records` / `zone.changes` / `anchor.digests` attributes |
+| `HTTP GET` | Root zone / root anchors fetches (child spans of `zone.run` / `anchor.run`; trace context is propagated via HTTP headers) |
+
+Enable it with environment variables:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector.example.com:4317
+export OTEL_EXPORTER_OTLP_INSECURE=true   # when using OTLP/gRPC without TLS
+export OTEL_SERVICE_NAME=dns-root-diff    # optional (defaults to this value)
+export OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production
+./bin/dns-root-diff -config config.yaml
+```
+
+When running under systemd, pass the variables with a drop-in:
+
+```ini
+# /etc/systemd/system/dns-root-diff.service.d/telemetry.conf
+[Service]
+Environment=OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector.example.com:4317
+Environment=OTEL_EXPORTER_OTLP_INSECURE=true
+Environment=OTEL_SERVICE_NAME=dns-root-diff
+Environment=OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart dns-root-diff
+```
+
+All other settings (headers, TLS, compression, timeouts) follow the standard
+OpenTelemetry environment variables (`OTEL_EXPORTER_OTLP_*`). Any OTLP-compatible backend
+(Zabbix 8.0 APM, Grafana Tempo, Jaeger, ...) can be used.
+
 ## Testing
 
 ```bash

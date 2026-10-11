@@ -237,6 +237,49 @@ make frontend-build    # internal/web/static に出力される
 インターネットへ公開する場合は nginx で TLS 終端するリバースプロキシを推奨。
 設定例と SELinux / firewalld の手順は [deploy/nginx.conf.example](deploy/nginx.conf.example) を参照。
 
+## トレース (OpenTelemetry)
+
+OpenTelemetry (OTLP) でトレースを送信できる。**既定では無効**で、`OTEL_EXPORTER_OTLP_ENDPOINT`
+または `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` を設定したときだけ有効になる (未設定時は no-op)。
+
+計装されるスパン:
+
+| スパン | 内容 |
+|---|---|
+| `GET /api/diffs` など | Web UI / API のリクエスト (`GET /api/diffs/{id}` のようにルート単位の低カーディナリティ名) |
+| `run` / `zone.run` / `anchor.run` | 定期実行 (および `-once`) の 1 回分。`zone.records` / `zone.changes` / `anchor.digests` 属性付き |
+| `HTTP GET` | root zone / root anchors の取得 (`zone.run` / `anchor.run` の子スパン。トレースコンテキストは HTTP ヘッダーで伝播) |
+
+有効化は環境変数で行う:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector.example.com:4317
+export OTEL_EXPORTER_OTLP_INSECURE=true   # TLS なしの OTLP/gRPC を使う場合
+export OTEL_SERVICE_NAME=dns-root-diff    # 既定値と同じなら不要
+export OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production
+./bin/dns-root-diff -config config.yaml
+```
+
+systemd で運用する場合は drop-in で環境変数を渡す:
+
+```ini
+# /etc/systemd/system/dns-root-diff.service.d/telemetry.conf
+[Service]
+Environment=OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector.example.com:4317
+Environment=OTEL_EXPORTER_OTLP_INSECURE=true
+Environment=OTEL_SERVICE_NAME=dns-root-diff
+Environment=OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart dns-root-diff
+```
+
+エンドポイント以外の設定 (ヘッダー / TLS / 圧縮 / タイムアウト) は OpenTelemetry の標準環境変数
+(`OTEL_EXPORTER_OTLP_*`) に従う。OTLP に対応したバックエンド (Zabbix 8.0 の APM、Grafana Tempo、
+Jaeger など) へそのまま送信できる。
+
 ## テスト
 
 ```bash

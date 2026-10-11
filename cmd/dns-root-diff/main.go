@@ -12,15 +12,23 @@ import (
 	"syscall"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/yfujii/dns-root-diff/internal/anchor"
 	"github.com/yfujii/dns-root-diff/internal/config"
 	"github.com/yfujii/dns-root-diff/internal/diff"
 	"github.com/yfujii/dns-root-diff/internal/fetcher"
 	"github.com/yfujii/dns-root-diff/internal/notify"
 	"github.com/yfujii/dns-root-diff/internal/store"
+	"github.com/yfujii/dns-root-diff/internal/telemetry"
 	"github.com/yfujii/dns-root-diff/internal/web"
 	"github.com/yfujii/dns-root-diff/internal/zone"
 )
+
+// version はトレースの service.version として送信するビルドバージョン。
+// リリースビルドでは -ldflags "-X main.version=v1.2.3" のように上書きする。
+var version = "dev"
 
 func main() {
 	if err := run(); err != nil {
@@ -33,6 +41,20 @@ func run() error {
 	configPath := flag.String("config", "", "path to config file")
 	once := flag.Bool("once", false, "run once and exit")
 	flag.Parse()
+
+	// トレースは OTEL_EXPORTER_OTLP_ENDPOINT (または OTEL_EXPORTER_OTLP_TRACES_ENDPOINT)
+	// が設定されている場合のみ有効。未設定なら何もせず no-op のまま動作する。
+	shutdown, err := telemetry.Setup(context.Background(), version)
+	if err != nil {
+		return fmt.Errorf("setup telemetry: %w", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdown(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "telemetry shutdown failed: %v\n", err)
+		}
+	}()
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -53,7 +75,7 @@ func runLoop(cfg config.Config, configPath string) error {
 	webErr := make(chan error, 1)
 	if cfg.Web.Enabled {
 		srv := &http.Server{
-			Handler: web.New(store.NewHistory(cfg.DataDir), store.NewAnchorHistory(cfg.DataDir), web.StaticFS()).Handler(),
+			Handler: newHTTPHandler(web.New(store.NewHistory(cfg.DataDir), store.NewAnchorHistory(cfg.DataDir), web.StaticFS()).Handler()),
 		}
 		// ポート競合や不正なアドレスを起動時に即検出できるよう bind は同期で行う。
 		ln, err := net.Listen("tcp", cfg.Web.Listen)
@@ -138,6 +160,9 @@ func buildNotifiers(cfg config.Config, configPath string) []notify.Notifier {
 }
 
 func runOnce(ctx context.Context, cfg config.Config, configPath string) error {
+	ctx, span := telemetry.Tracer().Start(ctx, "run")
+	defer span.End()
+
 	if err := runZoneOnce(ctx, cfg, configPath); err != nil {
 		return err
 	}
@@ -145,6 +170,10 @@ func runOnce(ctx context.Context, cfg config.Config, configPath string) error {
 }
 
 func runZoneOnce(ctx context.Context, cfg config.Config, configPath string) error {
+	ctx, span := telemetry.Tracer().Start(ctx, "zone.run")
+	defer span.End()
+	span.SetAttributes(attribute.String("zone.url", cfg.ZoneURL))
+
 	fmt.Printf("fetching zone from %s\n", cfg.ZoneURL)
 
 	f := fetcher.New(cfg.ZoneURL, 2*time.Minute)
@@ -176,6 +205,10 @@ func runZoneOnce(ctx context.Context, cfg config.Config, configPath string) erro
 
 	changes := diff.Diff(oldRecords, records)
 	diff.SortChanges(changes)
+	span.SetAttributes(
+		attribute.Int("zone.records", len(records)),
+		attribute.Int("zone.changes", len(changes)),
+	)
 	if len(changes) == 0 {
 		fmt.Println("no changes detected")
 	} else {
@@ -228,6 +261,10 @@ func runAnchorOnce(ctx context.Context, cfg config.Config, configPath string) er
 	if cfg.AnchorURL == "" {
 		return nil
 	}
+	ctx, span := telemetry.Tracer().Start(ctx, "anchor.run")
+	defer span.End()
+	span.SetAttributes(attribute.String("anchor.url", cfg.AnchorURL))
+
 	fmt.Printf("fetching root anchors from %s\n", cfg.AnchorURL)
 
 	f := fetcher.New(cfg.AnchorURL, 2*time.Minute)
@@ -240,6 +277,7 @@ func runAnchorOnce(ctx context.Context, cfg config.Config, configPath string) er
 	if err != nil {
 		return fmt.Errorf("parse root anchors: %w", err)
 	}
+	span.SetAttributes(attribute.Int("anchor.digests", len(ta.Digests)))
 	fmt.Printf("parsed %d key digests\n", len(ta.Digests))
 
 	s := store.NewAnchor(cfg.DataDir)
@@ -291,4 +329,20 @@ func runAnchorOnce(ctx context.Context, cfg config.Config, configPath string) er
 	}
 
 	return nil
+}
+
+// newHTTPHandler は Web サーバのスパン計装 (otelhttp) を追加したハンドラを返す。
+func newHTTPHandler(handler http.Handler) http.Handler {
+	return otelhttp.NewHandler(handler, "http.server",
+		otelhttp.WithSpanNameFormatter(httpSpanName),
+	)
+}
+
+// httpSpanName は "GET /api/diffs/{id}" のような低カーディナリティなスパン名を返す。
+// ServeMux が設定する r.Pattern (ルートパターン) を優先して使う。
+func httpSpanName(_ string, r *http.Request) string {
+	if r.Pattern != "" {
+		return r.Pattern
+	}
+	return r.Method + " " + r.URL.Path
 }
