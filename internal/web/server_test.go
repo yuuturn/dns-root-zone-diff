@@ -550,3 +550,29 @@ func TestAnchorAndZoneListsAreSeparate(t *testing.T) {
 		t.Errorf("anchor total = %v, want 1", anchorBody["total"])
 	}
 }
+
+func TestGetDiffIncludesDNSKEYKeyInfo(t *testing.T) {
+	entries := testEntries(1)
+	entries[0].Changes = []store.ChangeJSON{{
+		Kind: "removed", Category: "DNSSEC", Name: ".", Type: "DNSKEY",
+		OldTTL: u32ptr(172800), OldRData: "256 3 8 AwEAAa",
+		OldKey: &store.KeyJSON{Tag: 8763, Role: "zsk", Size: "2048b"},
+	}}
+	srv := newTestServer(entries)
+	defer srv.Close()
+
+	body := getJSON(t, srv.URL+"/api/diffs/"+entries[0].ID, http.StatusOK)
+	changes := body["changes"].([]any)
+	c := changes[0].(map[string]any)
+	key, ok := c["old_key"].(map[string]any)
+	if !ok {
+		t.Fatalf("changes[0].old_key = %v, want object", c["old_key"])
+	}
+	if key["tag"].(float64) != 8763 || key["role"] != "zsk" || key["size"] != "2048b" {
+		t.Errorf("old_key = %v", key)
+	}
+	// 鍵情報を持たない側は省略される。
+	if _, ok := c["new_key"]; ok {
+		t.Errorf("changes[0].new_key = %v, want omitted", c["new_key"])
+	}
+}

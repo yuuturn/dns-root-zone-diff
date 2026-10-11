@@ -131,6 +131,14 @@ re-signing: 2800 RRSIG (omitted)
 
 The breakdown is listed per record (RData capped at 40 characters). When it does not fit within the limit (`max_posts`), it switches to per-record lines with the RData shortened to its leading fields; for DS records this keeps the key tag / algorithm / digest type (`  + newgtld. DS 12345 8 2 ...`). If it still does not fit, it switches to per-TLD aggregation (`  example. NS +1 -1`), and if it still does not fit, the dropped count is shown explicitly at the end as `... +N more changes`.
 
+DNSKEY / CDNSKEY detail lines carry an annotation with the key tag, role, and key size so the key can be identified. The annotation is appended after the (truncated) RData for both the full RData (40 characters) and the shortened form. The key tag is computed per RFC 4034 Appendix B, the key size from the public key per RFC 3110 (RSA), and the role (KSK / ZSK) from the SEP bit. The size is shown as `2048b` for RSA and as `p256` / `ed25519` for ECDSA / EdDSA; it is omitted when it cannot be computed:
+
+```
+[DNSSEC]
+  - . DNSKEY 256 3 8 AwEAAcorNxNc9t0ue1ZenPjVMRujlQ2Y... (key tag = 8763 (zsk), size = 2048b)
+  + . DNSKEY 257 3 8 AwEAAaz/tAm8yTn4Mfeh5eyI96WSVexT... (key tag = 20326 (ksk), size = 2048b)
+```
+
 X is constrained to 280 characters, so it omits the `serial` and `re-signing` lines from the overview to keep room for per-record detail lines (default `max_posts: 6`):
 
 ```
@@ -180,7 +188,7 @@ Setting `web.enabled: true` starts a web server that lets you browse diff histor
 
 - `GET /` : list and detail views (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo)), switchable via the Root Zone / Root Anchors tabs
 - `GET /api/diffs?page=1&per_page=20` : root zone diff history list
-- `GET /api/diffs/{id}` : root zone diff detail. Optional query params: `category=<name>` filters changes by category, and `page` / `per_page` (default 100, max 100) paginate them — when paging params are present the response also carries `changes_total` and `total_pages`
+- `GET /api/diffs/{id}` : root zone diff detail. Optional query params: `category=<name>` filters changes by category, and `page` / `per_page` (default 100, max 100) paginate them — when paging params are present the response also carries `changes_total` and `total_pages`. DNSKEY / CDNSKEY changes also carry `old_key` / `new_key` (`tag` / `role` / `size`), which the UI renders with the same annotation as the notifications
 - `GET /api/anchors/diffs?page=1&per_page=20` : root anchors diff history list
 - `GET /api/anchors/diffs/{id}` : root anchors diff detail (same optional params as above)
 - `GET /api/health` : health check

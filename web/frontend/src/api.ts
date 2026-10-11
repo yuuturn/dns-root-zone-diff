@@ -14,6 +14,13 @@ export interface DiffSummary {
   summary: Summary;
 }
 
+// KeyInfo は DNSKEY / CDNSKEY の表示用情報 (サーバ側で算出される)。
+export interface KeyInfo {
+  tag: number;
+  role: string;
+  size?: string;
+}
+
 export interface Change {
   kind: "added" | "removed" | "modified";
   category: string;
@@ -23,6 +30,8 @@ export interface Change {
   new_ttl?: number;
   old_rdata?: string;
   new_rdata?: string;
+  old_key?: KeyInfo;
+  new_key?: KeyInfo;
 }
 
 export interface DiffEntry extends DiffSummary {

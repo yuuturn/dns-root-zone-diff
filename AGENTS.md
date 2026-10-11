@@ -29,6 +29,7 @@ https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2
 - `internal/zone`: zone ファイルパーサー
 - `internal/anchor`: root anchors (https://data.iana.org/root-anchors/root-anchors.xml) XML パーサー。各 KeyDigest を擬似 DS レコード (Name=キーID, RData=keytag alg digesttype digest [退役日]) に写像し、既存 diff エンジンで差分検出する
 - `internal/diff`: 新旧レコード差分検出 + カテゴリ分類
+- `internal/dnssec`: DNSKEY RDATA の表示用情報 (key tag = RFC 4034 Appendix B、ロール = SEP ビット、鍵長 = RFC 3110 / ECDSA / EdDSA) の算出。通知 (`internal/notify`) と履歴 (`internal/store` 経由で Web API) の双方が使う
 - `internal/store`: ローカルディスクへのスナップショット保存 (root.zone / root-anchors.xml) + diff 履歴の JSON 永続化 (`data_dir/diffs/` = zone、`data_dir/anchor-diffs/` = root anchors)
 - `internal/notify`: Notifier インターフェース (Notify=zone / NotifyAnchors=root anchors)、Slack Webhook、X API v2 (OAuth 2.0 ユーザートークン)、BlueSky (AT Protocol)
 - `internal/config`: YAML 設定 + 環境変数オーバーライド (`anchor_url` は空なら root anchors 監視無効)

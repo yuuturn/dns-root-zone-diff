@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yfujii/dns-root-diff/internal/diff"
+	"github.com/yfujii/dns-root-diff/internal/dnssec"
 )
 
 const historyDirName = "diffs"
@@ -49,19 +50,42 @@ type Summary struct {
 	ByCategory map[string]int `json:"by_category"`
 }
 
+// KeyJSON は DNSKEY / CDNSKEY の表示用情報 (key tag / ロール / 鍵長)。
+// Web UI が注記を組み立てるために使う。算出できない場合はフィールドごと省く。
+type KeyJSON struct {
+	Tag  uint16 `json:"tag"`
+	Role string `json:"role"`           // "ksk" または "zsk"
+	Size string `json:"size,omitempty"` // "2048b" / "p256" / "ed25519" など
+}
+
 // ChangeJSON は diff.Change の JSON 表現。
 // TTL はその側にレコードが存在する場合のみ持つ (ポインター)。
 // TTL 0 は DNS として有効な値のため、omitempty で欠落しないよう
 // 「存在しない」は nil で表現する。
 type ChangeJSON struct {
-	Kind     string  `json:"kind"`
-	Category string  `json:"category"`
-	Name     string  `json:"name"`
-	Type     string  `json:"type"`
-	OldTTL   *uint32 `json:"old_ttl,omitempty"`
-	NewTTL   *uint32 `json:"new_ttl,omitempty"`
-	OldRData string  `json:"old_rdata,omitempty"`
-	NewRData string  `json:"new_rdata,omitempty"`
+	Kind     string   `json:"kind"`
+	Category string   `json:"category"`
+	Name     string   `json:"name"`
+	Type     string   `json:"type"`
+	OldTTL   *uint32  `json:"old_ttl,omitempty"`
+	NewTTL   *uint32  `json:"new_ttl,omitempty"`
+	OldRData string   `json:"old_rdata,omitempty"`
+	NewRData string   `json:"new_rdata,omitempty"`
+	OldKey   *KeyJSON `json:"old_key,omitempty"`
+	NewKey   *KeyJSON `json:"new_key,omitempty"`
+}
+
+// keyJSON は RDATA から DNSKEY の表示用情報を取り出す。
+// DNSKEY / CDNSKEY 以外や算出できない RDATA では nil を返す。
+func keyJSON(rrType, rdata string) *KeyJSON {
+	if rdata == "" || (rrType != "DNSKEY" && rrType != "CDNSKEY") {
+		return nil
+	}
+	info := dnssec.ParseDNSKEY(rdata)
+	if info == nil {
+		return nil
+	}
+	return &KeyJSON{Tag: info.KeyTag, Role: info.Role(), Size: info.KeySize}
 }
 
 // NewEntry は検知時刻・新旧シリアル・変更群から Entry を組み立てる。
@@ -102,11 +126,15 @@ func NewEntry(detectedAt time.Time, oldSerial, newSerial string, changes []diff.
 		switch c.Kind {
 		case diff.ChangeAdded:
 			cj.NewTTL = &newTTL
+			cj.NewKey = keyJSON(c.Type, c.NewRData)
 		case diff.ChangeRemoved:
 			cj.OldTTL = &oldTTL
+			cj.OldKey = keyJSON(c.Type, c.OldRData)
 		case diff.ChangeModified:
 			cj.OldTTL = &oldTTL
 			cj.NewTTL = &newTTL
+			cj.OldKey = keyJSON(c.Type, c.OldRData)
+			cj.NewKey = keyJSON(c.Type, c.NewRData)
 		}
 		e.Changes = append(e.Changes, cj)
 	}

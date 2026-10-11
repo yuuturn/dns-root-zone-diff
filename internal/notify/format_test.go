@@ -852,3 +852,128 @@ func TestFormatPostsDefaultRDataTruncation(t *testing.T) {
 		t.Errorf("long rdata must be truncated by default (RDataMaxLen=0):\n%s", posts[0])
 	}
 }
+
+// root zone の DNSKEY (IANA 公開値: KSK 20326 / ZSK 8763)。
+const (
+	testRootKSK = "257 3 8 AwEAAaz/tAm8yTn4Mfeh5eyI96WSVexTBAvkMgJzkKTOiW1vkIbzxeF3+/4RgWOq7HrxRixHlFlExOLAJr5emLvN7SWXgnLh4+B5xQlNVz8Og8kvArMtNROxVQuCaSnIDdD5LKyWbRd2n9WGe2R8PzgCmr3EgVLrjyBxWezF0jLHwVN8efS3rCj/EWgvIWgb9tarpVUDK/b58Da+sqqls3eNbuv7pr+eoZG+SrDK6nWeL3c6H5Apxz7LjVc1uTIdsIXxuOLYA4/ilBmSVIzuDWfdRUfhHdY6+cn8HFRm+2hM8AnXGXws9555KrUB5qihylGa8subX2Nn6UwNR1AkUTV74bU="
+	testRootZSK = "256 3 8 AwEAAcorNxNc9t0ue1ZenPjVMRujlQ2YLBJ0pR/4XMjHby9vr03cRxFSKnWpxeg5PL384D9VeqdS1bjrGyTsHtoagzI3NiXFd8sjHMOnZxu5pp/+UBIg7tasYgVMMdUiM1Yu/c+t30d1Qw/v6NYLNnOnywTu6HuUh7Y1sZRq/GZcrxLENXHQoyKpOrOr8R3+qd6wK69IKB80ZBZtkX9rdEqKJk+yYXjEZzZ0zkAFthmNgCreAoU9PVlU66dyOsaLjf3wKUlUm9SNOKs+tK6LuSmRbK6+1T/tPaRaMBSEuv2G6vXfnJ1uyMbGvtpRn/YDcvTjrp6DzE6XyF44QdwJ3oKx4ek="
+)
+
+func TestFormatChangeDNSKEYAnnotation(t *testing.T) {
+	tests := []struct {
+		name     string
+		change   diff.Change
+		rdataMax int
+		want     string
+	}{
+		{
+			name:     "full RDATA は 40 文字で切り詰めて注記を付ける",
+			change:   diff.Change{Kind: diff.ChangeRemoved, Name: ".", Type: "DNSKEY", OldRData: testRootZSK},
+			rdataMax: 40,
+			want:     "  - . DNSKEY 256 3 8 AwEAAcorNxNc9t0ue1ZenPjVMRujlQ2Y... (key tag = 8763 (zsk), size = 2048b)",
+		},
+		{
+			name:     "short RDATA にも注記を付ける",
+			change:   diff.Change{Kind: diff.ChangeRemoved, Name: ".", Type: "DNSKEY", OldRData: testRootZSK},
+			rdataMax: 0,
+			want:     "  - . DNSKEY 256 3 8 ... (key tag = 8763 (zsk), size = 2048b)",
+		},
+		{
+			name:     "KSK は ksk と表示する",
+			change:   diff.Change{Kind: diff.ChangeAdded, Name: ".", Type: "DNSKEY", NewRData: testRootKSK},
+			rdataMax: 0,
+			want:     "  + . DNSKEY 257 3 8 ... (key tag = 20326 (ksk), size = 2048b)",
+		},
+		{
+			name:     "modified は新旧両方に注記を付ける",
+			change:   diff.Change{Kind: diff.ChangeModified, Name: ".", Type: "DNSKEY", OldRData: testRootKSK, NewRData: testRootZSK},
+			rdataMax: 0,
+			want:     "  ~ . DNSKEY 257 3 8 ... (key tag = 20326 (ksk), size = 2048b) -> 256 3 8 ... (key tag = 8763 (zsk), size = 2048b)",
+		},
+		{
+			name:     "CDNSKEY にも注記を付ける",
+			change:   diff.Change{Kind: diff.ChangeAdded, Name: ".", Type: "CDNSKEY", NewRData: testRootKSK},
+			rdataMax: 0,
+			want:     "  + . CDNSKEY 257 3 8 ... (key tag = 20326 (ksk), size = 2048b)",
+		},
+		{
+			name:     "RRSIG には注記を付けない",
+			change:   diff.Change{Kind: diff.ChangeAdded, Name: ".", Type: "RRSIG", NewRData: "DNSKEY 8 0 172800 20261101000000 20261011000000 38696 . sig"},
+			rdataMax: 0,
+			want:     "  + . RRSIG DNSKEY 8 0 172800 ...",
+		},
+		{
+			name:     "base64 が不正な DNSKEY には注記を付けない",
+			change:   diff.Change{Kind: diff.ChangeAdded, Name: ".", Type: "DNSKEY", NewRData: "256 3 8 !!!not-base64!!!"},
+			rdataMax: 0,
+			want:     "  + . DNSKEY 256 3 8 ...",
+		},
+		{
+			name:     "DS には注記を付けない",
+			change:   diff.Change{Kind: diff.ChangeAdded, Name: "newgtld.", Type: "DS", NewRData: "46645 13 2 A4DD7495AEA086F4602ACF3932BADDAABBC"},
+			rdataMax: 0,
+			want:     "  + newgtld. DS 46645 13 2 ...",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			if tt.rdataMax == 0 {
+				got = formatChangeShort(tt.change)
+			} else {
+				got = formatChange(tt.change, tt.rdataMax)
+			}
+			if got != tt.want {
+				t.Errorf("got  %q\nwant %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatPostsDNSKEYAnnotation(t *testing.T) {
+	// X の通知例と同じ検知 (ZSK の削除) を再現する。
+	changes := []diff.Change{{
+		Kind: diff.ChangeRemoved, Name: ".", Type: "DNSKEY", OldTTL: 172800,
+		OldRData: "256 3 8 AwEAAeCYD6Z7WWKVLeuWgowKP+3g+Gs1cnLKq7a3CaQxQpv8bfuFVI0WnG33qaSH/Mw9IBgifrdzf4XY/DQLnyBJ9MfaOyAWuEaEmYJ+GQPiwVVfstGwSA1McfFJUttTgq2Huu74KARhtA8wPo/N3XcyYQtNhz+qCM5NBb3ecx/naw6sYab9LxS6f2cU0q03++BP5Ks0Uef8WJCa/1izCYE+vMkwoltV+tENa3hpXiZ7jle/xdgaZrPi5ZGmyLVI34g1XVYrNlsCCTmNvFQIfzW5STFQFsQpizczyFn9r3LzSxxPCNwdlCG84bER0BmdwqbF6Tanv+FxMOavrahkj4wIy5k=",
+	}}
+	parts := FormatPosts(changes, FormatOptions{
+		MaxLen: 280, MaxParts: 6, Numbering: true, Weighted: true, CompactOverview: true,
+	})
+	if len(parts) != 1 {
+		t.Fatalf("got %d parts, want 1:\n%s", len(parts), strings.Join(parts, "\n===\n"))
+	}
+	want := strings.Join([]string{
+		"DNS Root Zone changes",
+		"DNSSEC 1",
+		"",
+		"[DNSSEC]",
+		"  - . DNSKEY 256 3 8 AwEAAeCYD6Z7WWKVLeuWgowKP+3g+Gs1... (key tag = 57780 (zsk), size = 2048b)",
+	}, "\n")
+	if parts[0] != want {
+		t.Errorf("got:\n%s\nwant:\n%s", parts[0], want)
+	}
+}
+
+func TestFormatPostsDNSKEYAnnotationWithShortRData(t *testing.T) {
+	// フル RDATA では収まらない件数のとき、短縮 RDATA でも注記が残る。
+	var changes []diff.Change
+	for i := 0; i < 12; i++ {
+		changes = append(changes, diff.Change{
+			Kind:     diff.ChangeRemoved,
+			Name:     fmt.Sprintf("tld%02d.", i),
+			Type:     "DNSKEY",
+			OldRData: testRootZSK,
+		})
+	}
+	parts := FormatPosts(changes, FormatOptions{
+		MaxLen: 280, MaxParts: 4, Numbering: true, Weighted: true, CompactOverview: true,
+	})
+	joined := strings.Join(parts, "\n")
+	if !strings.Contains(joined, "  - tld00. DNSKEY 256 3 8 ... (key tag = 8763 (zsk), size = 2048b)") {
+		t.Errorf("expected annotated short RDATA line in:\n%s", joined)
+	}
+	// 短縮が効かない場合は TLD 集約へフォールバックする (注記は出ない)。
+	if strings.Contains(joined, "DNSKEY -1") {
+		t.Errorf("unexpected TLD aggregation:\n%s", joined)
+	}
+}

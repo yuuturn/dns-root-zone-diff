@@ -147,6 +147,19 @@ DS 系は DNSKEY を特定できる key tag / algorithm / digest type まで残�
 (`  example. NS +1 -1`) に切り替え、最後まで収まらない場合は末尾に
 `... +N more changes` として落とした件数を明記する。
 
+DNSKEY / CDNSKEY の明細には、鍵を識別できるよう key tag / ロール / 鍵長の注記を
+付ける。注記はフル RDATA (40文字)・短縮 RDATA のどちらでも、切り詰めた RDATA の
+後ろに付く。key tag は RFC 4034 Appendix B、鍵長は RFC 3110 (RSA) の公開鍵から
+算出し、ロールは SEP ビットの有無で KSK / ZSK を判定する。鍵長は RSA なら
+`2048b`、ECDSA / EdDSA なら `p256` / `ed25519` のように表示し、算出できない
+場合は size を省く:
+
+```
+[DNSSEC]
+  - . DNSKEY 256 3 8 AwEAAcorNxNc9t0ue1ZenPjVMRujlQ2Y... (key tag = 8763 (zsk), size = 2048b)
+  + . DNSKEY 257 3 8 AwEAAaz/tAm8yTn4Mfeh5eyI96WSVexT... (key tag = 20326 (ksk), size = 2048b)
+```
+
 X は280文字に収めるため、レコード単位の明細を優先して概要の `serial` 行と
 `re-signing` 行を省く (デフォルト `max_posts: 6`):
 
@@ -205,7 +218,7 @@ make build
 
 - `GET /` : 一覧・詳細画面 (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))。Root Zone / Root Anchors のタブで切り替え
 - `GET /api/diffs?page=1&per_page=20` : root zone の diff 履歴一覧
-- `GET /api/diffs/{id}` : root zone の diff 詳細。オプションで `category=<名前>` でカテゴリ絞り込み、`page` / `per_page` (既定 100、上限 100) で changes をページングできる。ページング時は応答に `changes_total` / `total_pages` が追加される
+- `GET /api/diffs/{id}` : root zone の diff 詳細。オプションで `category=<名前>` でカテゴリ絞り込み、`page` / `per_page` (既定 100、上限 100) で changes をページングできる。ページング時は応答に `changes_total` / `total_pages` が追加される。DNSKEY / CDNSKEY の変更には `old_key` / `new_key` (`tag` / `role` / `size`) が付き、画面では通知と同じ注記として表示される
 - `GET /api/anchors/diffs?page=1&per_page=20` : root anchors の diff 履歴一覧
 - `GET /api/anchors/diffs/{id}` : root anchors の diff 詳細 (上記と同じオプション付き)
 - `GET /api/health` : 死活監視
