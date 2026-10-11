@@ -268,3 +268,83 @@ func TestAnchorHistoryRejectsBadID(t *testing.T) {
 		t.Error("Append() = nil error, want ErrInvalidID")
 	}
 }
+
+// root zone の DNSKEY (IANA 公開値: KSK 20326 / ZSK 8763)。
+const (
+	testKeyKSK = "257 3 8 AwEAAaz/tAm8yTn4Mfeh5eyI96WSVexTBAvkMgJzkKTOiW1vkIbzxeF3+/4RgWOq7HrxRixHlFlExOLAJr5emLvN7SWXgnLh4+B5xQlNVz8Og8kvArMtNROxVQuCaSnIDdD5LKyWbRd2n9WGe2R8PzgCmr3EgVLrjyBxWezF0jLHwVN8efS3rCj/EWgvIWgb9tarpVUDK/b58Da+sqqls3eNbuv7pr+eoZG+SrDK6nWeL3c6H5Apxz7LjVc1uTIdsIXxuOLYA4/ilBmSVIzuDWfdRUfhHdY6+cn8HFRm+2hM8AnXGXws9555KrUB5qihylGa8subX2Nn6UwNR1AkUTV74bU="
+	testKeyZSK = "256 3 8 AwEAAcorNxNc9t0ue1ZenPjVMRujlQ2YLBJ0pR/4XMjHby9vr03cRxFSKnWpxeg5PL384D9VeqdS1bjrGyTsHtoagzI3NiXFd8sjHMOnZxu5pp/+UBIg7tasYgVMMdUiM1Yu/c+t30d1Qw/v6NYLNnOnywTu6HuUh7Y1sZRq/GZcrxLENXHQoyKpOrOr8R3+qd6wK69IKB80ZBZtkX9rdEqKJk+yYXjEZzZ0zkAFthmNgCreAoU9PVlU66dyOsaLjf3wKUlUm9SNOKs+tK6LuSmRbK6+1T/tPaRaMBSEuv2G6vXfnJ1uyMbGvtpRn/YDcvTjrp6DzE6XyF44QdwJ3oKx4ek="
+)
+
+func TestNewEntryKeyInfo(t *testing.T) {
+	changes := []diff.Change{
+		{Kind: diff.ChangeAdded, Name: ".", Type: "DNSKEY", NewTTL: 172800, NewRData: testKeyKSK},
+		{Kind: diff.ChangeRemoved, Name: ".", Type: "DNSKEY", OldTTL: 172800, OldRData: testKeyZSK},
+		{Kind: diff.ChangeModified, Name: ".", Type: "DNSKEY", OldTTL: 172800, NewTTL: 172800, OldRData: testKeyZSK, NewRData: testKeyKSK},
+		{Kind: diff.ChangeAdded, Name: "newgtld.", Type: "DS", NewTTL: 172800, NewRData: "46645 13 2 A4DD7495"},
+	}
+	e := NewEntry(time.Date(2026, 7, 25, 6, 30, 0, 0, time.UTC), "old", "new", changes)
+
+	wantAdded := &KeyJSON{Tag: 20326, Role: "ksk", Size: "2048b"}
+	if got := e.Changes[0].NewKey; got == nil || *got != *wantAdded {
+		t.Errorf("Changes[0].NewKey = %+v, want %+v", got, wantAdded)
+	}
+	if e.Changes[0].OldKey != nil {
+		t.Errorf("Changes[0].OldKey = %+v, want nil for added change", e.Changes[0].OldKey)
+	}
+
+	wantRemoved := &KeyJSON{Tag: 8763, Role: "zsk", Size: "2048b"}
+	if got := e.Changes[1].OldKey; got == nil || *got != *wantRemoved {
+		t.Errorf("Changes[1].OldKey = %+v, want %+v", got, wantRemoved)
+	}
+
+	if got := e.Changes[2].OldKey; got == nil || *got != *wantRemoved {
+		t.Errorf("Changes[2].OldKey = %+v, want %+v", got, wantRemoved)
+	}
+	if got := e.Changes[2].NewKey; got == nil || *got != *wantAdded {
+		t.Errorf("Changes[2].NewKey = %+v, want %+v", got, wantAdded)
+	}
+
+	// DNSKEY 以外の変更には鍵情報を付けない。
+	if e.Changes[3].OldKey != nil || e.Changes[3].NewKey != nil {
+		t.Errorf("DS change has key info: %+v", e.Changes[3])
+	}
+}
+
+func TestKeyJSONJSONRoundTrip(t *testing.T) {
+	e := NewEntry(time.Now().UTC(), "old", "new", []diff.Change{
+		{Kind: diff.ChangeRemoved, Name: ".", Type: "DNSKEY", OldTTL: 172800, OldRData: testKeyZSK},
+	})
+	data, err := json.Marshal(e)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"old_key":{"tag":8763,"role":"zsk","size":"2048b"}`) {
+		t.Errorf("marshaled entry does not contain old_key:\n%s", data)
+	}
+	// 鍵情報が無い変更ではフィールド自体を出さない。
+	if strings.Contains(string(data), "new_key") {
+		t.Errorf("added-side key field should be omitted:\n%s", data)
+	}
+
+	var decoded Entry
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := decoded.Changes[0].OldKey; got == nil || got.Tag != 8763 || got.Role != "zsk" || got.Size != "2048b" {
+		t.Errorf("decoded OldKey = %+v", got)
+	}
+}
+
+func TestChangeJSONWithoutKeyInfoUnmarshals(t *testing.T) {
+	// 鍵情報を追加する前に保存された履歴も読めること。
+	const legacy = `{"id":"20260725T063000Z-1","detected_at":"2026-07-25T06:30:00Z","old_serial":"a","new_serial":"1",
+		"summary":{"total":1,"added":0,"removed":1,"modified":0,"by_category":{"DNSSEC":1}},
+		"changes":[{"kind":"removed","category":"DNSSEC","name":".","type":"DNSKEY","old_ttl":172800,"old_rdata":"256 3 8 AwEAA"}]}`
+	var e Entry
+	if err := json.Unmarshal([]byte(legacy), &e); err != nil {
+		t.Fatalf("unmarshal legacy entry: %v", err)
+	}
+	if len(e.Changes) != 1 || e.Changes[0].OldKey != nil {
+		t.Errorf("Changes = %+v, want one change without key info", e.Changes)
+	}
+}

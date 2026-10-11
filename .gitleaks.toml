@@ -17,4 +17,7 @@ paths = [
   # 高エントロピー文字列による誤検知が起きやすいため除外する
   '''^internal/web/static/''',
   '''^web/frontend/package-lock\.json$''',
+  # テストの DNSKEY / RRSIG は公開鍵・署名であり秘密情報ではない。
+  # 長い base64 が generic-api-key に誤検知されるため除外する。
+  '''_test\.go$''',
 ]

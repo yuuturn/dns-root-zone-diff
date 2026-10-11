@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/yfujii/dns-root-diff/internal/diff"
+	"github.com/yfujii/dns-root-diff/internal/dnssec"
 	"github.com/yfujii/dns-root-diff/internal/zone"
 )
 
@@ -341,21 +342,26 @@ func heading(cat diff.Category) string {
 // formatChange はレコード単位の明細行を組み立てる。
 // rdataMaxLen は RDATA の表示上限 (truncate する文字数)。
 func formatChange(c diff.Change, rdataMaxLen int) string {
-	return formatChangeWith(c, func(s string) string { return truncate(s, rdataMaxLen) })
+	return formatChangeWith(c, rdataMaxLen)
 }
 
 // formatChangeShort は RDATA を短縮したレコード単位の明細行を組み立てる。
 func formatChangeShort(c diff.Change) string {
-	return formatChangeWith(c, func(s string) string { return shortRData(s, c.Type) })
+	return formatChangeWith(c, 0)
 }
 
-// formatChangeWith は RDATA の変換関数を差し替えてレコード単位の明細行を組み立てる。
-func formatChangeWith(c diff.Change, rdata func(string) string) string {
+// formatChangeWith はレコード単位の明細行を組み立てる。
+// rdataMaxLen > 0 なら RDATA をその文字数で切り詰め、0 なら先頭フィールドだけに短縮する。
+// DNSKEY / CDNSKEY はどちらの場合も key tag / ロール / 鍵長の注記を付ける。
+func formatChangeWith(c diff.Change, rdataMaxLen int) string {
+	oldRData := formatRData(c.Type, c.OldRData, rdataMaxLen)
+	newRData := formatRData(c.Type, c.NewRData, rdataMaxLen)
+
 	switch c.Kind {
 	case diff.ChangeAdded:
-		return fmt.Sprintf("  + %s %s %s", c.Name, c.Type, rdata(c.NewRData))
+		return fmt.Sprintf("  + %s %s %s", c.Name, c.Type, newRData)
 	case diff.ChangeRemoved:
-		return fmt.Sprintf("  - %s %s %s", c.Name, c.Type, rdata(c.OldRData))
+		return fmt.Sprintf("  - %s %s %s", c.Name, c.Type, oldRData)
 	case diff.ChangeModified:
 		ttl := ""
 		if c.OldTTL != c.NewTTL {
@@ -365,8 +371,7 @@ func formatChangeWith(c diff.Change, rdata func(string) string) string {
 			// RDATA が同じ modified は TTL 変更のみ。
 			return fmt.Sprintf("  ~ %s %s %s", c.Name, c.Type, ttl)
 		}
-		line := fmt.Sprintf("  ~ %s %s %s -> %s", c.Name, c.Type,
-			rdata(c.OldRData), rdata(c.NewRData))
+		line := fmt.Sprintf("  ~ %s %s %s -> %s", c.Name, c.Type, oldRData, newRData)
 		if ttl != "" {
 			// RDATA と TTL が同時に変わった場合は両方伝える。
 			line += " (" + ttl + ")"
@@ -375,6 +380,39 @@ func formatChangeWith(c diff.Change, rdata func(string) string) string {
 	default:
 		return ""
 	}
+}
+
+// formatRData は明細行に載せる RDATA を組み立てる。
+// rdataMaxLen > 0 なら切り詰め、0 なら RR type ごとの先頭フィールドに短縮する。
+// DNSKEY / CDNSKEY は鍵を識別できるよう key tag / ロール / 鍵長の注記を付ける。
+// 注記は元の RDATA から算出し、切り詰めた RDATA の後ろに置く。
+func formatRData(rrType, rdata string, rdataMaxLen int) string {
+	if rdata == "" {
+		return ""
+	}
+	annotation := keyAnnotation(rrType, rdata)
+	if rdataMaxLen > 0 {
+		rdata = truncate(rdata, rdataMaxLen)
+	} else {
+		rdata = shortRData(rdata, rrType)
+	}
+	if annotation != "" {
+		rdata += " (" + annotation + ")"
+	}
+	return rdata
+}
+
+// keyAnnotation は DNSKEY / CDNSKEY の RDATA から表示用の注記を組み立てる。
+// 算出できない場合 (不正な鍵、不完全な RDATA など) は空文字列を返す。
+func keyAnnotation(rrType, rdata string) string {
+	if rrType != "DNSKEY" && rrType != "CDNSKEY" {
+		return ""
+	}
+	info := dnssec.ParseDNSKEY(rdata)
+	if info == nil {
+		return ""
+	}
+	return info.Annotation()
 }
 
 // shortRDataFields は短縮 RDATA で残す先頭フィールド数を RR type ごとに定義する。

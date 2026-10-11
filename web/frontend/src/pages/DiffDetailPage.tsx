@@ -18,6 +18,7 @@ import {
   formatDetectedAt,
   type Change,
   type DiffEntry,
+  type KeyInfo,
 } from "../api.ts";
 import { CategoryBadge, KindBadge, SummaryBadges } from "../components/badges.tsx";
 
@@ -70,32 +71,52 @@ function RDataCell({ change }: { change: Change }) {
   if (change.kind === "modified") {
     return (
       <div className="stack" style={{ gap: "0.25rem" }}>
-        <div className="rdata">
-          <Text variant="mono-secondary" as="span">
-            old:{" "}
-          </Text>
-          <Text variant="mono" as="span">
-            {formatRData(change.old_ttl, change.old_rdata)}
-          </Text>
-        </div>
-        <div className="rdata">
-          <Text variant="mono-secondary" as="span">
-            new:{" "}
-          </Text>
-          <Text variant="mono" as="span">
-            {formatRData(change.new_ttl, change.new_rdata)}
-          </Text>
-        </div>
+        <RDataLine label="old:" ttl={change.old_ttl} rdata={change.old_rdata} keyInfo={change.old_key} />
+        <RDataLine label="new:" ttl={change.new_ttl} rdata={change.new_rdata} keyInfo={change.new_key} />
       </div>
     );
   }
-  const ttl = change.kind === "removed" ? change.old_ttl : change.new_ttl;
-  const rdata = change.kind === "removed" ? change.old_rdata : change.new_rdata;
+  const removed = change.kind === "removed";
+  return (
+    <RDataLine
+      ttl={removed ? change.old_ttl : change.new_ttl}
+      rdata={removed ? change.old_rdata : change.new_rdata}
+      keyInfo={removed ? change.old_key : change.new_key}
+    />
+  );
+}
+
+// RDataLine は RDATA 1 件分の表示。
+// DNSKEY / CDNSKEY の注記は base64 の折り返しに埋もれないよう別行にする。
+function RDataLine({
+  label,
+  ttl,
+  rdata,
+  keyInfo,
+}: {
+  label?: string;
+  ttl?: number;
+  rdata?: string;
+  keyInfo?: KeyInfo;
+}) {
+  const annotation = formatKeyAnnotation(keyInfo);
   return (
     <div className="rdata">
+      {label && (
+        <Text variant="mono-secondary" as="span">
+          {label}{" "}
+        </Text>
+      )}
       <Text variant="mono" as="span">
         {formatRData(ttl, rdata)}
       </Text>
+      {annotation && (
+        <div className="key-annotation">
+          <Text variant="mono-secondary" as="span">
+            {annotation}
+          </Text>
+        </div>
+      )}
     </div>
   );
 }
@@ -106,6 +127,15 @@ function formatRData(ttl?: number, rdata?: string): string {
   if (ttl !== undefined) parts.push(`TTL ${ttl}`);
   if (rdata) parts.push(rdata);
   return parts.join("  ") || "-";
+}
+
+// formatKeyAnnotation は DNSKEY / CDNSKEY の注記を組み立てる。
+// 通知 (internal/dnssec の KeyInfo.Annotation) と同じ表記にする。
+function formatKeyAnnotation(key?: KeyInfo): string {
+  if (!key) return "";
+  let s = `key tag = ${key.tag} (${key.role})`;
+  if (key.size) s += `, size = ${key.size}`;
+  return s;
 }
 
 export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "anchors" }) {
