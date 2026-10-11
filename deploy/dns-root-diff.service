@@ -12,6 +12,12 @@ User=dns-root-diff
 Group=dns-root-diff
 # データ保存先
 StateDirectory=dns-root-diff
+# トレース (OpenTelemetry) を送る場合は環境変数で有効化する (未設定なら無効)。
+# 例:
+#Environment=OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector.example.com:4317
+#Environment=OTEL_EXPORTER_OTLP_INSECURE=true
+#Environment=OTEL_SERVICE_NAME=dns-root-diff
+#Environment=OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production
 # セキュリティ強化
 NoNewPrivileges=true
 ProtectSystem=strict

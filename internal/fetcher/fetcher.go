@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // Fetcher は root zone ファイルを HTTP で取得する。
@@ -15,11 +17,14 @@ type Fetcher struct {
 }
 
 // New は Fetcher を生成する。
+// 取得リクエストは OpenTelemetry でスパン計装され、呼び出し元のスパン
+// (Web リクエストや定期実行) の子スパンとして記録される。
 func New(url string, timeout time.Duration) *Fetcher {
 	return &Fetcher{
 		url: url,
 		client: &http.Client{
-			Timeout: timeout,
+			Timeout:   timeout,
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
 		},
 	}
 }
