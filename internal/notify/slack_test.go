@@ -43,6 +43,33 @@ func TestSlackNotifySuccess(t *testing.T) {
 	}
 }
 
+// TestSlackNotifyShowsSerialTransition は Slack 通知 (notifier 経由) でも SOA serial の
+// 遷移がタイトル行に載り、本文に serial 行が重複しないことを検証する。
+func TestSlackNotifyShowsSerialTransition(t *testing.T) {
+	var received map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &received)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	n := NewSlackNotifier(srv.URL)
+	changes := append(resigningChanges(4),
+		diff.Change{Kind: diff.ChangeAdded, Name: "newgtld.", Type: "NS", NewRData: "ns1.newgtld."},
+	)
+	if err := n.Notify(context.Background(), changes); err != nil {
+		t.Fatalf("Notify() error = %v", err)
+	}
+	text := received["text"]
+	if want := "2026072501 -> 2026072502 changes"; !strings.HasPrefix(text, want) {
+		t.Errorf("message should start with %q, got:\n%s", want, text)
+	}
+	if strings.Contains(text, "serial ") {
+		t.Errorf("message should not repeat the serial line:\n%s", text)
+	}
+}
+
 func TestSlackSkipsResigningOnlyChanges(t *testing.T) {
 	called := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
