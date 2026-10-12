@@ -116,9 +116,10 @@ The key tag is not included in the pairing fields. A ZSK rollover changes the ke
 
 When a run has substantive changes, it is notified in the following format. X splits at 280 characters and Slack at 3,500 characters; when more than one message is needed, a `(1/3)`-style number is added to the title line.
 
+The title line names the SOA serials the delta is between, so which serial-to-serial change a message reports is clear from the first line alone (the serial transition is not repeated in the body). When the diff contains no SOA change (such as a root anchors notification), the title falls back to `DNS Root Zone changes` / `DNS Root Anchors changes`.
+
 ```
-DNS Root Zone changes (1/2)
-serial 2026072501 -> 2026072502
+2026072501 -> 2026072502 changes (1/2)
 delegation 2 / DNSSEC 1 / glue 2
 re-signing: 2800 RRSIG (omitted)
 
@@ -139,10 +140,10 @@ DNSKEY / CDNSKEY detail lines carry an annotation with the key tag, role, and ke
   + . DNSKEY 257 3 8 AwEAAaz/tAm8yTn4Mfeh5eyI96WSVexT... (key tag = 20326 (ksk), size = 2048b)
 ```
 
-X is constrained to 280 characters, so it omits the `serial` and `re-signing` lines from the overview to keep room for per-record detail lines (default `max_posts: 6`):
+X is constrained to 280 characters, so it omits the `re-signing` line from the overview to keep room for per-record detail lines (default `max_posts: 6`):
 
 ```
-DNS Root Zone changes (1/2)
+2026072501 -> 2026072502 changes (1/2)
 delegation 2 / DNSSEC 1 / glue 2
 
 [delegation]

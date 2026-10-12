@@ -174,6 +174,32 @@ func TestTwitterSplitsLongMessageIntoNumberedPosts(t *testing.T) {
 	}
 }
 
+// TestTwitterNotifyShowsSerialTransition は X 投稿でも SOA serial の遷移がタイトル行に
+// 載ることを notifier 経由 (Notify) で検証する。再署名ノイズに紛れた SOA 変更が
+// タイトルから落ちないことが要点。
+func TestTwitterNotifyShowsSerialTransition(t *testing.T) {
+	srv := newTweetCollector(t)
+	defer srv.Close()
+
+	n := NewTwitterNotifier("key", "secret", "token", "tokensecret")
+	n.apiURL = srv.URL
+	n.postDelay = 0
+
+	changes := append(resigningChanges(4),
+		diff.Change{Kind: diff.ChangeAdded, Name: "newgtld.", Type: "NS", NewRData: "ns1.newgtld."},
+	)
+	if err := n.Notify(context.Background(), changes); err != nil {
+		t.Fatalf("Notify() error = %v", err)
+	}
+	texts := srv.Texts()
+	if len(texts) == 0 {
+		t.Fatal("no tweet was posted")
+	}
+	if want := "2026072501 -> 2026072502 changes"; !strings.HasPrefix(texts[0], want) {
+		t.Errorf("tweet should start with %q, got:\n%s", want, texts[0])
+	}
+}
+
 func TestTwitterCountsMultibyteAsWeighted(t *testing.T) {
 	srv := newTweetCollector(t)
 	defer srv.Close()

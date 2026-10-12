@@ -127,9 +127,13 @@ key tag は組を作るフィールドに含めない。ZSK ロールオーバ�
 実質的な変更があった回は次の形式で通知する。X は280文字ごと、Slack は3,500文字ごとに
 分割し、2通以上になる場合はタイトル行に `(1/3)` のような番号を付ける。
 
+タイトル行には「どのシリアル値からどのシリアル値への差分か」を載せるため、1通目だけで
+どの回の差分かが分かる (同じ遷移を本文の serial 行で繰り返さない)。差分に SOA の変更が
+含まれない場合 (root anchors 通知など) は `DNS Root Zone changes` /
+`DNS Root Anchors changes` にフォールバックする。
+
 ```
-DNS Root Zone changes (1/2)
-serial 2026072501 -> 2026072502
+2026072501 -> 2026072502 changes (1/2)
 delegation 2 / DNSSEC 1 / glue 2
 re-signing: 2800 RRSIG (omitted)
 
@@ -160,11 +164,11 @@ DNSKEY / CDNSKEY の明細には、鍵を識別できるよう key tag / ロー�
   + . DNSKEY 257 3 8 AwEAAaz/tAm8yTn4Mfeh5eyI96WSVexT... (key tag = 20326 (ksk), size = 2048b)
 ```
 
-X は280文字に収めるため、レコード単位の明細を優先して概要の `serial` 行と
-`re-signing` 行を省く (デフォルト `max_posts: 6`):
+X は280文字に収めるため、レコード単位の明細を優先して概要の `re-signing` 行を省く
+(デフォルト `max_posts: 6`):
 
 ```
-DNS Root Zone changes (1/2)
+2026072501 -> 2026072502 changes (1/2)
 delegation 2 / DNSSEC 1 / glue 2
 
 [delegation]

@@ -231,6 +231,51 @@ func TestBlueskySkipsResigningOnlyChanges(t *testing.T) {
 	}
 }
 
+// TestBlueskyNotifyShowsSerialTransition は SOA serial の遷移がタイトル行に載ることを
+// notifier 経由 (Notify) で検証する。過去のバグでは diff.Substantive で SOA を落としてから
+// FormatPosts に渡していたため、BlueSky 投稿だけ serial がタイトルに出なかった。
+func TestBlueskyNotifyShowsSerialTransition(t *testing.T) {
+	var texts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if r.URL.Path == "/xrpc/com.atproto.server.createSession" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"did":"did:plc:123","accessJwt":"jwt"}`))
+			return
+		}
+		var payload struct {
+			Record struct {
+				Text string `json:"text"`
+			} `json:"record"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		texts = append(texts, payload.Record.Text)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"uri":"at://did:plc:123/app.bsky.feed.post/abc","cid":"bafy"}`))
+	}))
+	defer srv.Close()
+
+	n := NewBlueskyNotifier(config.BlueskyConfig{
+		Handle:       "user.bsky.social",
+		AppPassword:  "app-pass",
+		APIURL:       srv.URL + "/xrpc",
+		MaxPostChars: 300,
+	})
+
+	changes := append(resigningChanges(4),
+		diff.Change{Kind: diff.ChangeAdded, Name: "newgtld.", Type: "NS", NewRData: "ns1.newgtld."},
+	)
+	if err := n.Notify(context.Background(), changes); err != nil {
+		t.Fatalf("Notify() error = %v", err)
+	}
+	if len(texts) == 0 {
+		t.Fatal("createRecord was not called")
+	}
+	if want := "2026072501 -> 2026072502 changes"; !strings.HasPrefix(texts[0], want) {
+		t.Errorf("post should start with %q, got:\n%s", want, texts[0])
+	}
+}
+
 func TestBlueskyNotifyHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/xrpc/com.atproto.server.createSession" {
