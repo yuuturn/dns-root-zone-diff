@@ -21,6 +21,66 @@ func compactTweetOpts() FormatOptions {
 	return opts
 }
 
+// TestFormatPostsTitleShowsSerialTransition はタイトル行が「どのシリアル値から
+// どのシリアル値への差分か」を明示すること (複数パーツのときは番号付き) を確認する。
+func TestFormatPostsTitleShowsSerialTransition(t *testing.T) {
+	changes := append(resigningChanges(3),
+		diff.Change{Kind: diff.ChangeAdded, Name: "newgtld.", Type: "NS", NewRData: "ns1.newgtld."},
+	)
+	want := "2026072501 -> 2026072502 changes"
+
+	parts := FormatPosts(changes, tweetOpts())
+	if len(parts) != 1 {
+		t.Fatalf("got %d parts, want 1:\n%s", len(parts), strings.Join(parts, "\n---\n"))
+	}
+	if !strings.HasPrefix(parts[0], want) {
+		t.Errorf("part should start with %q, got:\n%s", want, parts[0])
+	}
+
+	// serial 遷移はタイトル行に載せるため、本文の serial 行は重複させない
+	// (Slack / BlueSky のように compact でない通知でも同じ)。
+	slackParts := FormatPosts(changes, FormatOptions{MaxLen: slackMaxLen, MaxParts: slackMaxParts, Numbering: true})
+	if len(slackParts) != 1 {
+		t.Fatalf("got %d slack parts, want 1:\n%s", len(slackParts), strings.Join(slackParts, "\n---\n"))
+	}
+	if !strings.HasPrefix(slackParts[0], want) {
+		t.Errorf("slack part should start with %q, got:\n%s", want, slackParts[0])
+	}
+	if strings.Contains(slackParts[0], "serial ") {
+		t.Errorf("slack part should not repeat the serial line:\n%s", slackParts[0])
+	}
+
+	// 全パーツに同じシリアル遷移 + 番号が付く。
+	many := append(resigningChanges(3), manyDelegationChanges(50)...)
+	parts = FormatPosts(many, tweetOpts())
+	if len(parts) < 2 {
+		t.Fatalf("got %d parts, want >= 2:\n%s", len(parts), strings.Join(parts, "\n---\n"))
+	}
+	for i, p := range parts {
+		if prefix := fmt.Sprintf("%s (%d/%d)", want, i+1, len(parts)); !strings.HasPrefix(p, prefix) {
+			t.Errorf("part %d should start with %q, got:\n%s", i+1, prefix, p)
+		}
+	}
+}
+
+// TestFormatPostsTitleOmitsSerialWithoutSOAChange は SOA の変更が無い場合
+// (root anchors 通知など) に serial を載せず既定タイトルのままにすることを確認する。
+func TestFormatPostsTitleOmitsSerialWithoutSOAChange(t *testing.T) {
+	changes := []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "newgtld.", Type: "NS", NewRData: "ns1.newgtld."},
+	}
+	parts := FormatPosts(changes, tweetOpts())
+	if len(parts) != 1 {
+		t.Fatalf("got %d parts, want 1:\n%s", len(parts), strings.Join(parts, "\n---\n"))
+	}
+	if !strings.HasPrefix(parts[0], postTitle) {
+		t.Errorf("part should start with %q, got:\n%s", postTitle, parts[0])
+	}
+	if strings.Contains(parts[0], "->") {
+		t.Errorf("serial transition should not appear without an SOA change:\n%s", parts[0])
+	}
+}
+
 func TestFormatPostsCompactOverviewOmitsSerialAndResigning(t *testing.T) {
 	changes := append(resigningChanges(3),
 		diff.Change{Kind: diff.ChangeAdded, Name: "newgtld.", Type: "NS", NewRData: "ns1.newgtld."},
@@ -32,7 +92,7 @@ func TestFormatPostsCompactOverviewOmitsSerialAndResigning(t *testing.T) {
 	}
 	msg := parts[0]
 	for _, want := range []string{
-		postTitle,
+		"2026072501 -> 2026072502 changes",
 		"delegation 1 / DNSSEC 1",
 		"[delegation]",
 		"+ newgtld. NS ns1.newgtld.",
@@ -177,8 +237,7 @@ func TestFormatPostsSinglePartOverview(t *testing.T) {
 	}
 	msg := parts[0]
 	for _, want := range []string{
-		postTitle,
-		"serial 2026072501 -> 2026072502",
+		"2026072501 -> 2026072502 changes",
 		"delegation 1 / DNSSEC 1",
 		"re-signing: 6 RRSIG (omitted)",
 		"[delegation]",
@@ -189,6 +248,10 @@ func TestFormatPostsSinglePartOverview(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Errorf("missing %q in:\n%s", want, msg)
 		}
+	}
+	// serial 遷移はタイトル行に載せたので、本文の serial 行は重複させない。
+	if strings.Contains(msg, "\nserial ") {
+		t.Errorf("serial line should not be repeated in the body:\n%s", msg)
 	}
 	// 単一パーツでは番号を付けない。
 	if strings.Contains(msg, "(1/1)") {

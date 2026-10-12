@@ -14,7 +14,9 @@ import (
 
 const (
 	// postTitle は各パーツの先頭行。連続投稿でも単体で文脈が分かるよう全パーツに付ける。
-	postTitle = "DNS Root Zone changes"
+	// SOA serial を出せるときは changesTitle を使い、シリアル遷移を先頭行に載せる。
+	postTitle    = "DNS Root Zone changes"
+	changesTitle = "changes"
 	// anchorPostTitle は root anchors 変更投稿のタイトル。
 	anchorPostTitle = "DNS Root Anchors changes"
 	// anchorRDataMaxLen は anchors 投稿で DS ダイジェスト全体 (64文字) と退役日が
@@ -47,14 +49,18 @@ type FormatOptions struct {
 	// root anchors の DS ダイジェスト (64文字 + 退役日) は 40 では切れるため、
 	// anchors 通知では 120 を指定する。
 	RDataMaxLen int
-	// CompactOverview は概要ブロック (SOA serial / 再署名件数) を省く。
-	// true の場合、SOA serial 行と re-signing 行を出さない。
+	// CompactOverview は概要ブロックの re-signing 行を省く。
 	// 280字制限の X 向け圧縮オプション。Slack / BlueSky のような緩い上限では false のままにする。
 	CompactOverview bool
 }
 
 // title はパーツ先頭行のタイトルを返す。
-func (o FormatOptions) title() string {
+// ゾーン diff で SOA serial が変わった場合は、どのシリアル値からどのシリアル値への
+// 差分なのかが先頭行だけで分かるよう "old -> new changes" にする。
+func (o FormatOptions) title(oldSerial, newSerial string) string {
+	if oldSerial != "" && newSerial != "" {
+		return fmt.Sprintf("%s -> %s %s", oldSerial, newSerial, changesTitle)
+	}
 	if o.Title != "" {
 		return o.Title
 	}
@@ -214,10 +220,12 @@ func FormatPosts(changes []diff.Change, opts FormatOptions) []string {
 		return nil
 	}
 
+	oldSerial, newSerial, _ := soaSerials(changes)
+	title := opts.title(oldSerial, newSerial)
 	overview := overviewBlock(changes, sub, opts.CompactOverview)
 
 	for _, detail := range [][]block{recordBlocks(sub, opts), shortRecordBlocks(sub), aggregatedBlocks(sub, opts)} {
-		parts, dropped := pack(append([]block{overview}, detail...), opts, 0)
+		parts, dropped := pack(append([]block{overview}, detail...), opts, title, 0)
 		// 1件も落とさずに MaxParts に収まった候補だけを採用する。
 		if dropped == 0 && (opts.MaxParts <= 0 || len(parts) <= opts.MaxParts) {
 			return parts
@@ -225,7 +233,7 @@ func FormatPosts(changes []diff.Change, opts FormatOptions) []string {
 	}
 
 	// 集約でも収まらない場合は打ち切る。
-	parts, _ := pack(append([]block{overview}, aggregatedBlocks(sub, opts)...), opts, opts.MaxParts)
+	parts, _ := pack(append([]block{overview}, aggregatedBlocks(sub, opts)...), opts, title, opts.MaxParts)
 	return parts
 }
 
@@ -239,16 +247,13 @@ func anchorFormatOptions(base FormatOptions) FormatOptions {
 }
 
 // overviewBlock は先頭パーツに置く概要ブロックを組み立てる。
-// opts.CompactOverview が true の場合は serial 行と re-signing 行を省略し、
-// カテゴリ件数だけを残すことで X 投稿の文字数を節約する。
+// カテゴリ件数と、通知から省いた再署名ノイズの規模を載せる。
+//
+// SOA serial の遷移はタイトル行 (FormatOptions.title) に載せているため本文には出さない。
+// X は元々 compact で serial 行を省いていたが、Slack / BlueSky でもタイトルと
+// 重複しないよう統一した。
 func overviewBlock(all, sub []diff.Change, compact bool) block {
 	var lines []detailLine
-
-	if !compact {
-		if old, new, ok := soaSerials(all); ok {
-			lines = append(lines, detailLine{text: fmt.Sprintf("serial %s -> %s", old, new)})
-		}
-	}
 
 	counts := diff.CountByCategory(sub)
 	var catParts []string
@@ -460,18 +465,18 @@ func formatTLDGroup(g diff.TLDGroup) string {
 	return sb.String()
 }
 
-// pack はブロック群を MaxLen 以内のパーツに詰める。
+// pack はブロック群を MaxLen 以内のパーツに詰める。title は各パーツの先頭行。
 // maxParts > 0 の場合はパーツ数をそこで打ち切り、落とした変更件数を返す。
-func pack(blocks []block, opts FormatOptions, maxParts int) (parts []string, dropped int) {
+func pack(blocks []block, opts FormatOptions, title string, maxParts int) (parts []string, dropped int) {
 	measure := opts.measure()
-	packed, dropped := packOnce(blocks, opts.MaxLen, maxParts, measure, opts.title())
+	packed, dropped := packOnce(blocks, opts.MaxLen, maxParts, measure, title)
 
 	numbered := opts.Numbering && len(packed) > 1
 	if numbered {
 		// 番号の分だけ上限が減るため詰め直す。桁数が予約幅を超えたら予約を広げる (通常1周で確定)。
 		reserve := numberingReserve
 		for i := 0; i < 3; i++ {
-			packed, dropped = packOnce(blocks, opts.MaxLen-reserve, maxParts, measure, opts.title())
+			packed, dropped = packOnce(blocks, opts.MaxLen-reserve, maxParts, measure, title)
 			need := measure(fmt.Sprintf(" (%d/%d)", len(packed), len(packed)))
 			if need <= reserve {
 				break
