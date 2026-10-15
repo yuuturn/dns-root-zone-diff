@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- ヘッダーの GlobeHemisphereWestIcon (@phosphor-icons) と同じ SVG を favicon に使う -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- SVG favicon 非対応ブラウザ (Safari 26 未満など) 向けフォールバック。
+         /favicon.ico は icon 宣言が無い場合の自動取得にも使われる -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <title>DNS Root Zone Diff</title>
     <script type="module" crossorigin src="/assets/index-Cryt3yx6.js"></script>
     <link rel="modulepreload" crossorigin href="/assets/rolldown-runtime-Bh1tDfsg.js">
