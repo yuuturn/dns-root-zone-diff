@@ -3,6 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- テーマ (dark / light) を React のマウント前に適用してちらつきを防ぐ。
+         localStorage のキーとロジックは src/theme.ts と揃えること -->
+    <script>
+      (function () {
+        var mode;
+        try {
+          mode = localStorage.getItem("theme");
+        } catch (e) {
+          mode = null;
+        }
+        if (mode !== "light" && mode !== "dark") {
+          mode = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.dataset.mode = mode;
+      })();
+    </script>
     <!-- ヘッダーの GlobeHemisphereWestIcon (@phosphor-icons) と同じ図形の favicon。
          SVG 内の prefers-color-scheme で light (#18181b) / dark (#f5f5f5) を切り替える -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -28,12 +45,12 @@
     <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <title>DNS Root Zone Diff</title>
-    <script type="module" crossorigin src="/assets/index-Cryt3yx6.js"></script>
+    <script type="module" crossorigin src="/assets/index-C57KC2gZ.js"></script>
     <link rel="modulepreload" crossorigin href="/assets/rolldown-runtime-Bh1tDfsg.js">
-    <link rel="modulepreload" crossorigin href="/assets/kumo-66_6gm4P.js">
-    <link rel="modulepreload" crossorigin href="/assets/vendor-DvBFKakG.js">
+    <link rel="modulepreload" crossorigin href="/assets/kumo-l-pfcOSh.js">
+    <link rel="modulepreload" crossorigin href="/assets/vendor-Cohsb6g9.js">
     <link rel="stylesheet" crossorigin href="/assets/kumo-BfGnhEuq.css">
-    <link rel="stylesheet" crossorigin href="/assets/index-mQX3sWpq.css">
+    <link rel="stylesheet" crossorigin href="/assets/index-DjctyUb3.css">
   </head>
   <body>
     <div id="root"></div>
