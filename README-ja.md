@@ -13,7 +13,7 @@ DNS root zone の変更を機械的に検知して通知するツール。
 - 再署名ノイズを除いた実質的な変更をサマリーにして Slack Webhook へ通知
 - 同じサマリーを X (Twitter) API v2 へ 280文字ごとに分割して連投
 - 同じサマリーを BlueSky (AT Protocol) へ 300文字ごとに分割して投稿
-- diff 履歴を Web UI で閲覧 (Cloudflare [kumo](https://github.com/cloudflare/kumo) 製、Root Zone / Root Anchors のタブで分離)
+- diff 履歴を Web UI で閲覧 (Cloudflare [kumo](https://github.com/cloudflare/kumo) 製、Root Zone / Root Anchors のタブで分離)。ヘッダーに dark / light 切替スイッチと GitHub リポジトリへのリンク
 
 ## 運用中
 
@@ -220,7 +220,7 @@ make build
 (`-once` では起動しない)。履歴は変更検知のたびに JSON として保存される
 (zone は `data_dir/diffs/`、root anchors は `data_dir/anchor-diffs/`)。
 
-- `GET /` : 一覧・詳細画面 (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))。Root Zone / Root Anchors のタブで切り替え
+- `GET /` : 一覧・詳細画面 (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))。Root Zone / Root Anchors のタブで切り替え。ヘッダーの月/太陽スイッチで dark / light を切り替えられ、選択は localStorage に保存される (未選択時は OS の設定に追従)。ヘッダーの "View on GitHub" はリポジトリへのリンク
 - `GET /api/diffs?page=1&per_page=20` : root zone の diff 履歴一覧
 - `GET /api/diffs/{id}` : root zone の diff 詳細。オプションで `category=<名前>` でカテゴリ絞り込み、`page` / `per_page` (既定 100、上限 100) で changes をページングできる。ページング時は応答に `changes_total` / `total_pages` が追加される。DNSKEY / CDNSKEY の変更には `old_key` / `new_key` (`tag` / `role` / `size`) が付き、画面では通知と同じ注記として表示される
 - `GET /api/anchors/diffs?page=1&per_page=20` : root anchors の diff 履歴一覧

@@ -1,10 +1,12 @@
 /* kumo の standalone CSS には任意の Tailwind ユーティリティが含まれないため、
-   レイアウトはここで定義する。色は kumo のテーマ変数 (light-dark 対応) を参照する。 */
+   レイアウトはここで定義する。色は kumo のテーマ変数 (light-dark / data-mode 対応)
+   を参照する。light 専用の固定色をフォールバックに書くとダークテーマで
+   コントラストが壊れるため、フォールバックは付けない。 */
 
 body {
   margin: 0;
-  background: var(--color-kumo-canvas, #fafafa);
-  color: var(--text-color-kumo-default, #1d1d1d);
+  background: var(--color-kumo-canvas);
+  color: var(--text-color-kumo-default);
   font-family:
     ui-sans-serif,
     system-ui,
@@ -21,10 +23,17 @@ body {
 .app-header {
   display: flex;
   align-items: center;
-  gap: 0.625rem;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
   padding-bottom: 1rem;
   margin-bottom: 1.5rem;
-  border-bottom: 1px solid var(--color-kumo-hairline, #e5e5e5);
+  border-bottom: 1px solid var(--color-kumo-hairline);
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
 }
 
 .app-header a {
@@ -32,16 +41,97 @@ body {
   text-decoration: none;
 }
 
+/* ヘッダー右端の操作 (View on GitHub + テーマ切替) */
+.app-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+/* sun / moon 付きの dark / light 切り替えスイッチ。
+   kumo に相当するコンポーネントが無いため、色は kumo のテーマ変数で組む。
+   つまみ (knob) が現在のテーマ側に寄り、その下のアイコンを強調する。 */
+.theme-switch {
+  position: relative;
+  flex: none;
+  width: 4.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--color-kumo-fill);
+  box-shadow: inset 0 0 0 1px var(--color-kumo-line);
+  cursor: pointer;
+}
+
+.theme-switch:focus-visible {
+  outline: 2px solid var(--color-kumo-focus);
+  outline-offset: 2px;
+}
+
+.theme-switch-icon {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  transform: translateY(-50%);
+  color: var(--text-color-kumo-subtle);
+  transition: color 160ms ease;
+}
+
+.theme-switch-icon-sun {
+  left: 0.625rem;
+}
+
+.theme-switch-icon-moon {
+  right: 0.625rem;
+}
+
+/* つまみの下にあるアイコンはつまみ色の反転色にして、どちらのテーマでも
+   つまみとアイコンのコントラストを確保する */
+.theme-switch[aria-checked="false"] .theme-switch-icon-sun,
+.theme-switch[aria-checked="true"] .theme-switch-icon-moon {
+  color: var(--text-color-kumo-inverse);
+}
+
+.theme-switch-knob {
+  position: absolute;
+  top: 0.25rem;
+  left: 0.25rem;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  /* つまみは light で黒 / dark で白 (--color-kumo-contrast)。
+     上のアイコンはその反転色 (--text-color-kumo-inverse) になる */
+  background: var(--color-kumo-contrast);
+  box-shadow:
+    0 0 0 1px var(--color-kumo-line),
+    0 1px 2px rgb(0 0 0 / 0.2);
+  transition: transform 160ms ease;
+}
+
+/* つまみの移動量 = 幅 4.25 - つまみ 1.75 - 左右の余白 0.25×2 */
+.theme-switch[aria-checked="true"] .theme-switch-knob {
+  transform: translateX(2rem);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-switch-icon,
+  .theme-switch-knob {
+    transition: none;
+  }
+}
+
 .app-nav {
   display: flex;
   gap: 0.25rem;
   padding-bottom: 1rem;
   margin-bottom: 1.5rem;
-  border-bottom: 1px solid var(--color-kumo-hairline, #e5e5e5);
+  border-bottom: 1px solid var(--color-kumo-hairline);
 }
 
 .nav-link {
-  color: var(--text-color-kumo-secondary, #555);
+  color: var(--text-color-kumo-subtle);
   text-decoration: none;
   padding: 0.375rem 0.75rem;
   border-radius: 0.375rem;
@@ -50,12 +140,12 @@ body {
 }
 
 .nav-link:hover {
-  background: var(--color-kumo-canvas-subtle, #f0f0f0);
+  background: var(--color-kumo-tint);
 }
 
 .nav-link.active {
-  color: var(--text-color-kumo-accent, #1d1d1d);
-  background: var(--color-kumo-canvas-subtle, #f0f0f0);
+  color: var(--text-color-kumo-strong);
+  background: var(--color-kumo-fill);
 }
 
 .stack {
