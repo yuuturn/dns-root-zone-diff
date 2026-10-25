@@ -51,6 +51,7 @@ https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2
 
 - `web/frontend/` を変更したら `make frontend-build` を実行し、出力された `internal/web/static/` を**変更と同じコミットに含める**。
 - CI はフロントエンドを再ビルドして `git diff --exit-code internal/web/static` で一致を検証するため、ビルド忘れがあると CI が落ちる。
+- dependabot が切ったブランチ (`dependabot/**`) の PR では、`frontend-artifacts` ワークフローがビルド成果物を自動コミット・push して CI を再実行するため、手動での成果物更新は不要 (Actions シークレット `FRONTEND_ARTIFACTS_PAT` が必要)。
 - 通常の Go ビルド・デプロイには Node.js は不要 (成果物コミット済みのため)。
 - kumo の standalone CSS には任意の Tailwind ユーティリティが含まれない。レイアウト用クラスは `web/frontend/src/app.css` に定義する。
 
