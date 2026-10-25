@@ -195,3 +195,8 @@ body {
 .clickable-row {
   cursor: pointer;
 }
+
+/* throwaway: frontend-artifacts workflow E2E verification (test branch only) */
+.dsh-artifacts-e2e {
+  display: none;
+}
