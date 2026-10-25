@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # frontend-artifacts ワークフローが dependabot PR のブランチにビルド成果物を
+  # push した際、GITHUB_TOKEN による push は push / pull_request イベントを
+  # 発火しないため、成果物 push 後に ci を dispatch して PR ブランチの checks を
+  # 更新するために使用する。
+  workflow_dispatch:
 
 jobs:
   ci:
