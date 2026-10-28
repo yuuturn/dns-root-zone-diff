@@ -61,7 +61,7 @@ export function DiffListPage() {
     <div className="stack">
       <LayerCard className="p-0">
         <div className="table-scroll" role="region" aria-label="Diffs table" tabIndex={0}>
-          <Table className="list-table">
+          <Table>
             <Table.Header>
               <Table.Row>
                 <Table.Head>Detected</Table.Head>

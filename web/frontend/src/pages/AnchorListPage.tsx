@@ -66,7 +66,7 @@ export function AnchorListPage() {
           aria-label="Root anchor diffs table"
           tabIndex={0}
         >
-          <Table className="list-table">
+          <Table>
             <Table.Header>
               <Table.Row>
                 <Table.Head>Detected</Table.Head>

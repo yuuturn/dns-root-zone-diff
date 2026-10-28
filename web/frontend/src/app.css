@@ -243,7 +243,8 @@ body {
   }
 }
 
-/* 詳細テーブル (min-width: 56rem) がカード幅に収まらない間はヒントを出す。 */
+/* 詳細テーブル (min-width: 56rem + 左右のコンテナ余白) がカード幅に収まらない
+   間はヒントを出す。.diff-table の min-width を変える場合はこの閾値も合わせる。 */
 @media (max-width: 57.99rem) {
   .table-scroll-hint {
     display: block;

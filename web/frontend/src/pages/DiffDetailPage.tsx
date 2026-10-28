@@ -202,16 +202,22 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
   // アドレスバーでのフラグメント編集やブラウザの戻る/進むに追随する。
   // タブ切替は History API の replaceState を使うため hashchange は発火しない。
   useEffect(() => {
+    const categories = entry ? Object.keys(entry.summary.by_category) : null;
     const syncFromHash = () => {
-      const next = tabFromHash(window.location.hash);
-      setTab((current) => (current === next ? current : next));
-      setPage(1);
-      // #all のような正規化できるフラグメントはこの時点で整える。
+      const raw = tabFromHash(window.location.hash);
+      // データ取得済みなら、大文字小文字の違いや未知のカテゴリをこの場で解決する。
+      // 同じタブに正規化される場合はページ位置を維持する。
+      const next = categories ? resolveTab(raw, categories) : raw;
+      if (next !== tab) {
+        setTab(next);
+        setPage(1);
+      }
+      // #all や #dnssec のようなフラグメントはこの時点で正規化する。
       replaceTabHash(next);
     };
     window.addEventListener("hashchange", syncFromHash);
     return () => window.removeEventListener("hashchange", syncFromHash);
-  }, []);
+  }, [entry, tab]);
 
   // タブ切替を URL のフラグメントに反映する。
   useEffect(() => {
@@ -241,7 +247,17 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
       perPage: DETAIL_PER_PAGE,
     })
       .then((resp) => {
-        if (!cancelled) setEntry(resp);
+        if (cancelled) return;
+        // #dnssec のような大文字小文字違いのフラグメントは、この時点では
+        // category=dnssec で 0 件になる。空の結果を一瞬描画しないよう、
+        // カテゴリが確定したらタブを正規化して再取得に任せる。
+        const resolved = resolveTab(tab, Object.keys(resp.summary.by_category));
+        if (resolved !== tab) {
+          setTab(resolved);
+          setPage(1);
+          return;
+        }
+        setEntry(resp);
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err.message);
