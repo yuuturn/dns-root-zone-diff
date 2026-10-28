@@ -10,7 +10,7 @@ import {
   Text,
 } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
   fetchAnchorDiff,
@@ -25,44 +25,84 @@ import { CategoryBadge, KindBadge, SummaryBadges } from "../components/badges.ts
 // 詳細 API の既定ページング件数 (サーバ側 defaultDetailPerPage と一致させる)
 const DETAIL_PER_PAGE = 100;
 
+// ALL_TAB は「すべて」タブの値。それ以外は API の category 値をそのまま使う。
+const ALL_TAB = "all";
+
+// tabFromHash は URL の #DNSSEC / #glue のようなフラグメントをタブ値に変換する。
+// フラグメント無し・空は「すべて」を表す。
+function tabFromHash(hash: string): string {
+  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+  if (!raw) return ALL_TAB;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    // 不正なパーセントエンコーディングはそのままタブ値として扱い、
+    // 後の resolveTab で有効なカテゴリか判定する。
+    return raw;
+  }
+}
+
+// resolveTab はタブ値が現在のエントリのカテゴリに存在するか検証する。
+// 大文字小文字の違い (#dnssec) はカテゴリ名 (#DNSSEC) に寄せ、
+// 存在しないカテゴリは「すべて」にフォールバックする。
+function resolveTab(tab: string, categories: string[]): string {
+  if (tab === ALL_TAB) return ALL_TAB;
+  if (categories.includes(tab)) return tab;
+  return categories.find((category) => category.toLowerCase() === tab.toLowerCase()) ?? ALL_TAB;
+}
+
+// replaceTabHash はタブに対応するフラグメントを URL に書き込む。
+// タブはフィルタなので履歴は増やさず、スクロール位置も維持する。
+function replaceTabHash(tab: string): void {
+  const desiredHash = tab === ALL_TAB ? "" : `#${encodeURIComponent(tab)}`;
+  if (window.location.hash === desiredHash) return;
+  const nextURL = `${window.location.pathname}${window.location.search}${desiredHash}`;
+  window.history.replaceState(window.history.state, "", nextURL);
+}
+
 function ChangeTable({ changes }: { changes: Change[] }) {
   if (changes.length === 0) {
     return <Empty size="sm" title="No changes in this category" />;
   }
   return (
     <LayerCard className="p-0">
-      <Table>
-        <Table.Header>
-          <Table.Row>
-            <Table.Head>Kind</Table.Head>
-            <Table.Head>Name</Table.Head>
-            <Table.Head>Type</Table.Head>
-            <Table.Head>Category</Table.Head>
-            <Table.Head>Record data</Table.Head>
-          </Table.Row>
-        </Table.Header>
-        <Table.Body>
-          {changes.map((c, i) => (
-            <Table.Row key={i}>
-              <Table.Cell>
-                <KindBadge kind={c.kind} />
-              </Table.Cell>
-              <Table.Cell>
-                <Text variant="mono">{c.name}</Text>
-              </Table.Cell>
-              <Table.Cell>
-                <Text variant="mono">{c.type}</Text>
-              </Table.Cell>
-              <Table.Cell>
-                <CategoryBadge category={c.category} />
-              </Table.Cell>
-              <Table.Cell>
-                <RDataCell change={c} />
-              </Table.Cell>
+      <p className="table-scroll-hint">Scroll horizontally to see all columns →</p>
+      <div className="table-scroll" role="region" aria-label="Changes table" tabIndex={0}>
+        {/* スマートフォンでは列が潰れないよう、テーブル自身に最小幅を持たせて
+            カード内で横スクロールさせる (カード側は overflow-hidden のまま)。 */}
+        <Table className="diff-table">
+          <Table.Header>
+            <Table.Row>
+              <Table.Head>Kind</Table.Head>
+              <Table.Head>Name</Table.Head>
+              <Table.Head>Type</Table.Head>
+              <Table.Head>Category</Table.Head>
+              <Table.Head>Record data</Table.Head>
             </Table.Row>
-          ))}
-        </Table.Body>
-      </Table>
+          </Table.Header>
+          <Table.Body>
+            {changes.map((c, i) => (
+              <Table.Row key={i}>
+                <Table.Cell>
+                  <KindBadge kind={c.kind} />
+                </Table.Cell>
+                <Table.Cell>
+                  <Text variant="mono">{c.name}</Text>
+                </Table.Cell>
+                <Table.Cell>
+                  <Text variant="mono">{c.type}</Text>
+                </Table.Cell>
+                <Table.Cell>
+                  <CategoryBadge category={c.category} />
+                </Table.Cell>
+                <Table.Cell>
+                  <RDataCell change={c} />
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table>
+      </div>
     </LayerCard>
   );
 }
@@ -142,8 +182,10 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
   const { id } = useParams<{ id: string }>();
   const [entry, setEntry] = useState<DiffEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState("all");
+  // #DNSSEC / #glue のようなフラグメントがあればそのタブを初期表示する。
+  const [tab, setTab] = useState(() => tabFromHash(window.location.hash));
   const [page, setPage] = useState(1);
+  const tabsRef = useRef<HTMLDivElement>(null);
   const isAnchors = variant === "anchors";
 
   // エントリ (id) が変わったらタブとページを初期化する。
@@ -153,9 +195,39 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
     setPrevId(id);
     setEntry(null);
     setError(null);
-    setTab("all");
+    setTab(tabFromHash(window.location.hash));
     setPage(1);
   }
+
+  // アドレスバーでのフラグメント編集やブラウザの戻る/進むに追随する。
+  // タブ切替は History API の replaceState を使うため hashchange は発火しない。
+  useEffect(() => {
+    const syncFromHash = () => {
+      const next = tabFromHash(window.location.hash);
+      setTab((current) => (current === next ? current : next));
+      setPage(1);
+      // #all のような正規化できるフラグメントはこの時点で整える。
+      replaceTabHash(next);
+    };
+    window.addEventListener("hashchange", syncFromHash);
+    return () => window.removeEventListener("hashchange", syncFromHash);
+  }, []);
+
+  // タブ切替を URL のフラグメントに反映する。
+  useEffect(() => {
+    replaceTabHash(tab);
+  }, [tab]);
+
+  // 選択中のタブが横スクロール領域の外にある場合 (パーマリンクで直接開いた場合など)
+  // は見える位置までスクロールする。
+  useEffect(() => {
+    if (entry === null) return;
+    const list = tabsRef.current?.querySelector<HTMLElement>('[role="tablist"]');
+    const active = list?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+    if (!list || !active) return;
+    const centered = active.offsetLeft - (list.clientWidth - active.offsetWidth) / 2;
+    list.scrollLeft = Math.max(0, Math.min(centered, list.scrollWidth - list.clientWidth));
+  }, [entry, tab]);
 
   useEffect(() => {
     if (!id) return;
@@ -164,7 +236,7 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
     // (都度ローダーを出すより体感が良い。順序乱れは cancelled で防ぐ)。
     const fetch = isAnchors ? fetchAnchorDiff : fetchDiff;
     fetch(id, {
-      category: tab === "all" ? undefined : tab,
+      category: tab === ALL_TAB ? undefined : tab,
       page: page,
       perPage: DETAIL_PER_PAGE,
     })
@@ -209,6 +281,14 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
 
   const categories = Object.keys(entry.summary.by_category).sort();
 
+  // ハッシュが未知のカテゴリを指している場合は「すべて」に戻す。
+  // render 中の state 調整なので、無効なタブのまま画面に描画されない。
+  const resolvedTab = resolveTab(tab, categories);
+  if (resolvedTab !== tab) {
+    setTab(resolvedTab);
+    setPage(1);
+  }
+
   return (
     <div className="stack">
       <Breadcrumbs>
@@ -248,21 +328,24 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
         </LayerCard.Primary>
       </LayerCard>
 
-      <Tabs
-        variant="underline"
-        tabs={[
-          { value: "all", label: `All (${entry.summary.total})` },
-          ...categories.map((cat) => ({
-            value: cat,
-            label: `${cat} (${entry.summary.by_category[cat]})`,
-          })),
-        ]}
-        value={tab}
-        onValueChange={(value) => {
-          setTab(value);
-          setPage(1);
-        }}
-      />
+      <div ref={tabsRef}>
+        <Tabs
+          variant="underline"
+          listClassName="tabs-scroll"
+          tabs={[
+            { value: ALL_TAB, label: `All (${entry.summary.total})` },
+            ...categories.map((cat) => ({
+              value: cat,
+              label: `${cat} (${entry.summary.by_category[cat]})`,
+            })),
+          ]}
+          value={tab}
+          onValueChange={(value) => {
+            setTab(value);
+            setPage(1);
+          }}
+        />
+      </div>
 
       <ChangeTable changes={entry.changes} />
 

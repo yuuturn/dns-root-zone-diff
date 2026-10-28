@@ -60,43 +60,45 @@ export function DiffListPage() {
   return (
     <div className="stack">
       <LayerCard className="p-0">
-        <Table>
-          <Table.Header>
-            <Table.Row>
-              <Table.Head>Detected</Table.Head>
-              <Table.Head>Serial</Table.Head>
-              <Table.Head>Changes</Table.Head>
-              <Table.Head>Categories</Table.Head>
-            </Table.Row>
-          </Table.Header>
-          <Table.Body>
-            {data.diffs.map((d) => (
-              <Table.Row
-                key={d.id}
-                className="clickable-row"
-                onClick={() => navigate(`/diffs/${d.id}`)}
-              >
-                <Table.Cell>{formatDetectedAt(d.detected_at)}</Table.Cell>
-                <Table.Cell>
-                  <Text variant="mono">{d.new_serial}</Text>
-                </Table.Cell>
-                <Table.Cell>
-                  <span className="row">
-                    {d.summary.total}
-                    <SummaryBadges summary={d.summary} />
-                  </span>
-                </Table.Cell>
-                <Table.Cell>
-                  <Text variant="secondary" size="sm" as="span">
-                    {Object.entries(d.summary.by_category)
-                      .map(([cat, count]) => `${cat}: ${count}`)
-                      .join(", ")}
-                  </Text>
-                </Table.Cell>
+        <div className="table-scroll" role="region" aria-label="Diffs table" tabIndex={0}>
+          <Table className="list-table">
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>Detected</Table.Head>
+                <Table.Head>Serial</Table.Head>
+                <Table.Head>Changes</Table.Head>
+                <Table.Head>Categories</Table.Head>
               </Table.Row>
-            ))}
-          </Table.Body>
-        </Table>
+            </Table.Header>
+            <Table.Body>
+              {data.diffs.map((d) => (
+                <Table.Row
+                  key={d.id}
+                  className="clickable-row"
+                  onClick={() => navigate(`/diffs/${d.id}`)}
+                >
+                  <Table.Cell>{formatDetectedAt(d.detected_at)}</Table.Cell>
+                  <Table.Cell>
+                    <Text variant="mono">{d.new_serial}</Text>
+                  </Table.Cell>
+                  <Table.Cell>
+                    <span className="row">
+                      {d.summary.total}
+                      <SummaryBadges summary={d.summary} />
+                    </span>
+                  </Table.Cell>
+                  <Table.Cell>
+                    <Text variant="secondary" size="sm" as="span">
+                      {Object.entries(d.summary.by_category)
+                        .map(([cat, count]) => `${cat}: ${count}`)
+                        .join(", ")}
+                    </Text>
+                  </Table.Cell>
+                </Table.Row>
+              ))}
+            </Table.Body>
+          </Table>
+        </div>
       </LayerCard>
       {data.total > PER_PAGE && (
         <Pagination page={page} setPage={setPage} perPage={PER_PAGE} totalCount={data.total}>
