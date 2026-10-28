@@ -177,8 +177,78 @@ body {
 
 .meta-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
   gap: 1rem;
+}
+
+/* テーブルの横スクロール領域。
+   kumo の Table はスクロールコンテナを持たず、LayerCard が overflow-hidden の
+   ため、そのままではスマートフォンで右側の列が切れて見えなくなる。
+   カード内にスクロールコンテナを置き、テーブル側は最小幅を確保して列を潰さない。 */
+.table-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.table-scroll:focus-visible {
+  outline: 2px solid var(--color-kumo-focus);
+  outline-offset: -2px;
+}
+
+.diff-table {
+  min-width: 56rem;
+}
+
+/* 詳細テーブルがカード幅に収まらず横スクロールになる間だけ、
+   スクロールできることを示すヒントを表示する。 */
+.table-scroll-hint {
+  display: none;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--color-kumo-hairline);
+  color: var(--text-color-kumo-subtle);
+  font-size: 0.75rem;
+}
+
+/* 長い RDATA 行では Kind / Name などが縦中央に沈むため、上揃えにする。 */
+.diff-table td {
+  vertical-align: top;
+}
+
+/* underline タブは kumo 側に横スクロール機構が無いため、タブ列自体を
+   スクロールコンテナにする。縦方向ははみ出しを隠してスクロールバーを防ぐ。 */
+.tabs-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tabs-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 40rem) {
+  .app-container {
+    padding: 1rem 0.75rem 3rem;
+  }
+
+  /* スマートフォンではセル余白を詰めて、列数を保ったまま表示領域を稼ぐ。 */
+  .table-scroll table th,
+  .table-scroll table td {
+    padding: 0.5rem;
+  }
+}
+
+/* 詳細テーブル (min-width: 56rem + 左右のコンテナ余白) がカード幅に収まらない
+   間はヒントを出す。.diff-table の min-width を変える場合はこの閾値も合わせる。 */
+@media (max-width: 57.99rem) {
+  .table-scroll-hint {
+    display: block;
+  }
 }
 
 .rdata {

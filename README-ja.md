@@ -220,7 +220,7 @@ make build
 (`-once` では起動しない)。履歴は変更検知のたびに JSON として保存される
 (zone は `data_dir/diffs/`、root anchors は `data_dir/anchor-diffs/`)。
 
-- `GET /` : 一覧・詳細画面 (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))。Root Zone / Root Anchors のタブで切り替え。ヘッダーの月/太陽スイッチで dark / light を切り替えられ、選択は localStorage に保存される (未選択時は OS の設定に追従)。ヘッダーの "View on GitHub" はリポジトリへのリンク
+- `GET /` : 一覧・詳細画面 (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))。Root Zone / Root Anchors のタブで切り替え。ヘッダーの月/太陽スイッチで dark / light を切り替えられ、選択は localStorage に保存される (未選択時は OS の設定に追従)。ヘッダーの "View on GitHub" はリポジトリへのリンク。カテゴリタブは URL のフラグメントでパーマリンク化されており、`/diffs/<id>#DNSSEC` で DNSSEC の絞り込みを直接開ける。狭い画面では diff テーブルを横スクロールして列の切れを防ぐ
 - `GET /api/diffs?page=1&per_page=20` : root zone の diff 履歴一覧
 - `GET /api/diffs/{id}` : root zone の diff 詳細。オプションで `category=<名前>` でカテゴリ絞り込み、`page` / `per_page` (既定 100、上限 100) で changes をページングできる。ページング時は応答に `changes_total` / `total_pages` が追加される。DNSKEY / CDNSKEY の変更には `old_key` / `new_key` (`tag` / `role` / `size`) が付き、画面では通知と同じ注記として表示される
 - `GET /api/anchors/diffs?page=1&per_page=20` : root anchors の diff 履歴一覧

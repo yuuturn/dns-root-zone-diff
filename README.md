@@ -187,7 +187,7 @@ make build
 
 Setting `web.enabled: true` starts a web server that lets you browse diff history in scheduled mode (`-once` does not start it). History is saved as JSON on each detection (zone in `data_dir/diffs/`, root anchors in `data_dir/anchor-diffs/`).
 
-- `GET /` : list and detail views (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo)), switchable via the Root Zone / Root Anchors tabs. The header's moon / sun switch toggles dark / light (the choice is stored in localStorage and follows the OS setting until one is made), and "View on GitHub" links to the repository
+- `GET /` : list and detail views (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo)), switchable via the Root Zone / Root Anchors tabs. The header's moon / sun switch toggles dark / light (the choice is stored in localStorage and follows the OS setting until one is made), and "View on GitHub" links to the repository. Category tabs are deep-linkable through the URL fragment, so `/diffs/<id>#DNSSEC` opens the DNSSEC filter directly. On narrow screens the diff tables scroll horizontally instead of clipping columns
 - `GET /api/diffs?page=1&per_page=20` : root zone diff history list
 - `GET /api/diffs/{id}` : root zone diff detail. Optional query params: `category=<name>` filters changes by category, and `page` / `per_page` (default 100, max 100) paginate them — when paging params are present the response also carries `changes_total` and `total_pages`. DNSKEY / CDNSKEY changes also carry `old_key` / `new_key` (`tag` / `role` / `size`), which the UI renders with the same annotation as the notifications
 - `GET /api/anchors/diffs?page=1&per_page=20` : root anchors diff history list
