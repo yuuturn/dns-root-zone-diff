@@ -390,8 +390,9 @@ func runTLDOnce(ctx context.Context, cfg config.Config, configPath string) error
 		fmt.Println("no TLD changes detected")
 	} else {
 		fmt.Printf("detected %d TLD changes\n", len(changes))
-		// TLD リストに再署名のような機械的変更は無いが、通知方針を zone /
-		// anchors と揃えるため Substantive で絞ってから通知する。
+		// TLD 擬似レコードは mechanicalSpecs (RRSIG / SOA / ZONEMD) の対象外なので、
+		// 検出した差分は常に substantive になる。zone / anchors と同じ判定を通す
+		// ための防御的コードで、次の「機械的変更のみ」分岐には現状到達しない。
 		if substantive := diff.Substantive(changes); len(substantive) == 0 {
 			fmt.Println("TLD changes are all mechanical; skipping notification")
 		} else if hadPrevious {
