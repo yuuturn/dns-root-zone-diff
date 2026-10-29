@@ -509,7 +509,7 @@ func TestTwitterNotifyTLDs(t *testing.T) {
 
 	err := n.NotifyTLDs(context.Background(), []diff.Change{
 		{Kind: diff.ChangeAdded, Name: "newgtld.", Type: diff.TypeTLD},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,5 +518,59 @@ func TestTwitterNotifyTLDs(t *testing.T) {
 	}
 	if !strings.Contains(received["text"], "+ newgtld. TLD") {
 		t.Errorf("text should include the new TLD:\n%s", received["text"])
+	}
+}
+
+func TestTwitterNotifyTLDsWithWhoisReply(t *testing.T) {
+	type tweetPayload struct {
+		Text  string `json:"text"`
+		Reply *struct {
+			InReplyToTweetID string `json:"in_reply_to_tweet_id"`
+		} `json:"reply"`
+	}
+
+	var mu sync.Mutex
+	var payloads []tweetPayload
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var p tweetPayload
+		if err := json.Unmarshal(body, &p); err != nil {
+			t.Errorf("unmarshal tweet payload: %v", err)
+		}
+		mu.Lock()
+		payloads = append(payloads, p)
+		n := len(payloads)
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+		// 1通目 (通知本体) の ID を、2通目 (リプライ) が参照する。
+		_, _ = fmt.Fprintf(w, `{"data":{"id":"%d"}}`, 100+n-1)
+	}))
+	defer srv.Close()
+
+	n := NewTwitterNotifier("key", "secret", "token", "tokensecret")
+	n.apiURL = srv.URL
+	n.postDelay = 0
+
+	err := n.NotifyTLDs(context.Background(), []diff.Change{
+		{Kind: diff.ChangeRemoved, Name: "helsinki.", Type: diff.TypeTLD},
+	}, helsinkiInfos())
+	if err != nil {
+		t.Fatalf("NotifyTLDs() error = %v", err)
+	}
+
+	mu.Lock()
+	got := append([]tweetPayload(nil), payloads...)
+	mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("posted %d tweets, want 2 (notification + whois reply): %+v", len(got), got)
+	}
+	if !strings.HasPrefix(got[0].Text, "DNS TLD List changes") || got[0].Reply != nil {
+		t.Errorf("first tweet = %+v, want notification without reply", got[0])
+	}
+	if got[1].Reply == nil || got[1].Reply.InReplyToTweetID != "100" {
+		t.Errorf("reply target = %+v, want in_reply_to_tweet_id=100", got[1].Reply)
+	}
+	if want := FormatWhoisReply("helsinki", helsinkiWhois()); got[1].Text != want {
+		t.Errorf("reply text =\n%q\nwant:\n%q", got[1].Text, want)
 	}
 }

@@ -12,12 +12,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/yfujii/dns-root-diff/internal/diff"
+	"github.com/yfujii/dns-root-diff/internal/whois"
 )
 
 const (
@@ -118,7 +120,8 @@ func (tw *TwitterNotifier) Notify(ctx context.Context, changes []diff.Change) er
 		Weighted:        true,
 		CompactOverview: true,
 	})
-	return tw.postPosts(ctx, posts, "post tweet")
+	_, err := tw.postPosts(ctx, posts, "post tweet")
+	return err
 }
 
 // NotifyAnchors は root anchors の変更を X にツイートする。
@@ -131,12 +134,14 @@ func (tw *TwitterNotifier) NotifyAnchors(ctx context.Context, changes []diff.Cha
 		Weighted:        true,
 		CompactOverview: true,
 	}))
-	return tw.postPosts(ctx, posts, "post anchor tweet")
+	_, err := tw.postPosts(ctx, posts, "post anchor tweet")
+	return err
 }
 
 // NotifyTLDs は TLD リストの変更を X にツイートする。
 // X の 280 字制限に合わせて serial / re-signing 行を省いた圧縮概要を使う。
-func (tw *TwitterNotifier) NotifyTLDs(ctx context.Context, changes []diff.Change) error {
+// 最後のツイートに、追加・削除された TLD の WHOIS 情報をリプライとして連投する。
+func (tw *TwitterNotifier) NotifyTLDs(ctx context.Context, changes []diff.Change, infos map[string]whois.Info) error {
 	posts := FormatPosts(changes, tldFormatOptions(FormatOptions{
 		MaxLen:          tweetMaxLen,
 		MaxParts:        tw.maxPosts,
@@ -144,54 +149,117 @@ func (tw *TwitterNotifier) NotifyTLDs(ctx context.Context, changes []diff.Change
 		Weighted:        true,
 		CompactOverview: true,
 	}))
-	return tw.postPosts(ctx, posts, "post TLD tweet")
-}
 
-// postPosts は posts を順に投稿する。連投時は postDelay だけ間隔を空ける。
-func (tw *TwitterNotifier) postPosts(ctx context.Context, posts []string, prefix string) error {
-	for i, msg := range posts {
-		if i > 0 && tw.postDelay > 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(tw.postDelay):
+	lastID, err := tw.postPosts(ctx, posts, "post TLD tweet")
+	if err != nil {
+		return err
+	}
+	if lastID == "" {
+		// 通知本体が投稿されたのに ID が取得できない場合は、リプライを
+		// 付けられない理由を残す。
+		if len(posts) > 0 {
+			fmt.Fprintf(os.Stderr, "twitter: tweet response missing id; skip WHOIS replies\n")
+		}
+		return nil
+	}
+
+	for i, reply := range buildWhoisReplies(changes, infos) {
+		if i > 0 {
+			if err := tw.wait(ctx); err != nil {
+				return err
 			}
 		}
-		if err := tw.postTweet(ctx, msg); err != nil {
-			return fmt.Errorf("%s %d/%d: %w", prefix, i+1, len(posts), err)
+		text := fitWeighted(reply.text, tweetMaxLen)
+		if _, err := tw.post(ctx, text, lastID); err != nil {
+			return fmt.Errorf("post TLD whois reply (%s): %w", reply.tld, err)
 		}
 	}
 	return nil
 }
 
-func (tw *TwitterNotifier) postTweet(ctx context.Context, text string) error {
-	status, body, err := tw.doTweet(ctx, text)
+// postPosts は posts を順に投稿し、最後に投稿したツイートの ID を返す。
+// 連投時は postDelay だけ間隔を空ける。
+func (tw *TwitterNotifier) postPosts(ctx context.Context, posts []string, prefix string) (string, error) {
+	lastID := ""
+	for i, msg := range posts {
+		if i > 0 {
+			if err := tw.wait(ctx); err != nil {
+				return "", err
+			}
+		}
+		id, err := tw.postTweet(ctx, msg)
+		if err != nil {
+			return "", fmt.Errorf("%s %d/%d: %w", prefix, i+1, len(posts), err)
+		}
+		lastID = id
+	}
+	return lastID, nil
+}
+
+// wait は連投間隔だけ待つ。postDelay が 0 なら何もしない。
+func (tw *TwitterNotifier) wait(ctx context.Context) error {
+	if tw.postDelay <= 0 {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(tw.postDelay):
+		return nil
+	}
+}
+
+func (tw *TwitterNotifier) postTweet(ctx context.Context, text string) (string, error) {
+	return tw.post(ctx, text, "")
+}
+
+// post は text を投稿し、作成されたツイートの ID を返す。
+// replyTo が空でなければ、そのツイートへのリプライとして投稿する。
+func (tw *TwitterNotifier) post(ctx context.Context, text, replyTo string) (string, error) {
+	status, body, err := tw.doTweet(ctx, text, replyTo)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if status == http.StatusCreated || status == http.StatusOK {
-		return nil
+		return tweetID(body), nil
 	}
 
 	// OAuth2: try refresh once on unauthorized/forbidden with invalid token
 	if tw.bearerToken != "" && tw.canRefresh() && (status == http.StatusUnauthorized || status == http.StatusForbidden) {
 		if rerr := tw.refreshAccessToken(ctx); rerr != nil {
-			return fmt.Errorf("twitter API returned status %d: %s (refresh failed: %v)", status, body, rerr)
+			return "", fmt.Errorf("twitter API returned status %d: %s (refresh failed: %v)", status, body, rerr)
 		}
-		status, body, err = tw.doTweet(ctx, text)
+		status, body, err = tw.doTweet(ctx, text, replyTo)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if status == http.StatusCreated || status == http.StatusOK {
-			return nil
+			return tweetID(body), nil
 		}
 	}
 
-	return fmt.Errorf("twitter API returned status %d: %s", status, body)
+	return "", fmt.Errorf("twitter API returned status %d: %s", status, body)
 }
 
-func (tw *TwitterNotifier) doTweet(ctx context.Context, text string) (int, string, error) {
-	payload := map[string]string{"text": text}
+// tweetID は API 応答から作成されたツイートの ID を取り出す。
+// 解析できない場合や ID が無い場合は空文字列を返す。
+func tweetID(body string) string {
+	var result struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &result); err != nil {
+		return ""
+	}
+	return result.Data.ID
+}
+
+func (tw *TwitterNotifier) doTweet(ctx context.Context, text, replyTo string) (int, string, error) {
+	payload := map[string]any{"text": text}
+	if replyTo != "" {
+		payload["reply"] = map[string]string{"in_reply_to_tweet_id": replyTo}
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return 0, "", fmt.Errorf("marshal tweet payload: %w", err)

@@ -3,11 +3,13 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -466,7 +468,7 @@ func TestBlueskyNotifyTLDs(t *testing.T) {
 	})
 	err := n.NotifyTLDs(context.Background(), []diff.Change{
 		{Kind: diff.ChangeAdded, Name: "newgtld.", Type: diff.TypeTLD},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -483,5 +485,118 @@ func TestBlueskyNotifyTLDs(t *testing.T) {
 	}
 	if !strings.Contains(payload.Record.Text, "+ newgtld. TLD") {
 		t.Errorf("text should include the new TLD:\n%s", payload.Record.Text)
+	}
+}
+
+func TestBlueskyNotifyTLDsSkipsReplyWithoutCID(t *testing.T) {
+	var createRecords int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/xrpc/com.atproto.server.createSession" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"did":"did:plc:123","accessJwt":"jwt"}`))
+			return
+		}
+		if r.URL.Path == "/xrpc/com.atproto.repo.createRecord" {
+			createRecords++
+			w.WriteHeader(http.StatusOK)
+			// cid が無い応答ではリプライの strong ref を作れない。
+			_, _ = w.Write([]byte(`{"uri":"at://did:plc:123/app.bsky.feed.post/abc"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	n := NewBlueskyNotifier(config.BlueskyConfig{
+		Handle:       "user.bsky.social",
+		AppPassword:  "app-pass",
+		APIURL:       srv.URL + "/xrpc",
+		MaxPostChars: 300,
+	})
+	err := n.NotifyTLDs(context.Background(), []diff.Change{
+		{Kind: diff.ChangeRemoved, Name: "helsinki.", Type: diff.TypeTLD},
+	}, helsinkiInfos())
+	if err != nil {
+		t.Fatalf("NotifyTLDs() error = %v", err)
+	}
+	if createRecords != 1 {
+		t.Errorf("createRecord calls = %d, want 1 (notification only, no reply)", createRecords)
+	}
+}
+
+func TestBlueskyNotifyTLDsWithWhoisReply(t *testing.T) {
+	type strongRef struct {
+		URI string `json:"uri"`
+		CID string `json:"cid"`
+	}
+	type record struct {
+		Text  string `json:"text"`
+		Reply *struct {
+			Root   strongRef `json:"root"`
+			Parent strongRef `json:"parent"`
+		} `json:"reply"`
+	}
+
+	var mu sync.Mutex
+	var records []record
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if r.URL.Path == "/xrpc/com.atproto.server.createSession" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"did":"did:plc:123","accessJwt":"jwt"}`))
+			return
+		}
+		if r.URL.Path == "/xrpc/com.atproto.repo.createRecord" {
+			var payload struct {
+				Record record `json:"record"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Errorf("decode createRecord payload: %v", err)
+			}
+			mu.Lock()
+			records = append(records, payload.Record)
+			n := len(records)
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			// 1件目 (通知本体) の strong ref を、2件目 (リプライ) が参照する。
+			_, _ = fmt.Fprintf(w,
+				`{"uri":"at://did:plc:123/app.bsky.feed.post/%d","cid":"bafy-%d"}`, n, n)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	n := NewBlueskyNotifier(config.BlueskyConfig{
+		Handle:       "user.bsky.social",
+		AppPassword:  "app-pass",
+		APIURL:       srv.URL + "/xrpc",
+		MaxPostChars: 300,
+	})
+	err := n.NotifyTLDs(context.Background(), []diff.Change{
+		{Kind: diff.ChangeRemoved, Name: "helsinki.", Type: diff.TypeTLD},
+	}, helsinkiInfos())
+	if err != nil {
+		t.Fatalf("NotifyTLDs() error = %v", err)
+	}
+
+	mu.Lock()
+	got := append([]record(nil), records...)
+	mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("posted %d records, want 2 (notification + whois reply): %+v", len(got), got)
+	}
+	if !strings.HasPrefix(got[0].Text, "DNS TLD List changes") || got[0].Reply != nil {
+		t.Errorf("first record = %+v, want notification without reply", got[0])
+	}
+	wantRef := strongRef{URI: "at://did:plc:123/app.bsky.feed.post/1", CID: "bafy-1"}
+	if got[1].Reply == nil {
+		t.Fatalf("reply record has no reply ref: %+v", got[1])
+	}
+	if got[1].Reply.Root != wantRef || got[1].Reply.Parent != wantRef {
+		t.Errorf("reply refs = %+v, want root=parent=%+v", got[1].Reply, wantRef)
+	}
+	if want := FormatWhoisReply("helsinki", helsinkiWhois()); got[1].Text != want {
+		t.Errorf("reply text =\n%q\nwant:\n%q", got[1].Text, want)
 	}
 }

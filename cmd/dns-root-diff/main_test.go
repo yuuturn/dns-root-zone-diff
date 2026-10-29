@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -15,7 +17,10 @@ import (
 	"time"
 
 	"github.com/yfujii/dns-root-diff/internal/config"
+	"github.com/yfujii/dns-root-diff/internal/diff"
+	"github.com/yfujii/dns-root-diff/internal/notify"
 	"github.com/yfujii/dns-root-diff/internal/store"
+	"github.com/yfujii/dns-root-diff/internal/whois"
 	"github.com/yfujii/dns-root-diff/internal/zone"
 )
 
@@ -616,6 +621,109 @@ func TestRunOnceSkipsTLDWhenDisabled(t *testing.T) {
 	}
 	if store.NewTLD(cfg.DataDir).Exists() {
 		t.Error("TLD snapshot must not be created when TLDURL is empty")
+	}
+}
+
+func TestLookupTLDWhois(t *testing.T) {
+	var mu sync.Mutex
+	calls := make(map[string]int)
+	lookup := func(_ context.Context, tldName string) (whois.Info, error) {
+		mu.Lock()
+		calls[tldName]++
+		mu.Unlock()
+		if tldName == "former" {
+			return whois.Info{}, errors.New("no WHOIS data")
+		}
+		return whois.Info{Domain: strings.ToUpper(tldName), Status: "ACTIVE", Source: "IANA"}, nil
+	}
+
+	changes := []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "new.", Type: diff.TypeTLD},
+		{Kind: diff.ChangeRemoved, Name: "former.", Type: diff.TypeTLD},
+		{Kind: diff.ChangeAdded, Name: "delegation.", Type: "NS", NewRData: "ns1.delegation."},
+		{Kind: diff.ChangeModified, Name: "modified.", Type: diff.TypeTLD},
+	}
+	infos := lookupTLDWhois(context.Background(), changes, lookup)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if calls["new"] != 1 || calls["former"] != 1 || len(calls) != 2 {
+		t.Errorf("lookup calls = %v, want new and former once each", calls)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("infos = %+v, want only the successful lookup", infos)
+	}
+	if info, ok := infos["new"]; !ok || info.Domain != "NEW" || info.Status != "ACTIVE" {
+		t.Errorf("infos[new] = %+v, %v", info, ok)
+	}
+	if _, ok := infos["former"]; ok {
+		t.Error("failed lookup must not be included in infos")
+	}
+}
+
+func TestLookupTLDWhoisConcurrencyLimit(t *testing.T) {
+	var mu sync.Mutex
+	current, maxCurrent := 0, 0
+	lookup := func(_ context.Context, tldName string) (whois.Info, error) {
+		mu.Lock()
+		current++
+		if current > maxCurrent {
+			maxCurrent = current
+		}
+		mu.Unlock()
+
+		time.Sleep(10 * time.Millisecond)
+
+		mu.Lock()
+		current--
+		mu.Unlock()
+		return whois.Info{Domain: strings.ToUpper(tldName), Source: "IANA"}, nil
+	}
+
+	changes := make([]diff.Change, 0, 12)
+	for i := 0; i < 12; i++ {
+		changes = append(changes, diff.Change{
+			Kind: diff.ChangeAdded,
+			Name: fmt.Sprintf("tld%02d.", i),
+			Type: diff.TypeTLD,
+		})
+	}
+	infos := lookupTLDWhois(context.Background(), changes, lookup)
+	if len(infos) != len(changes) {
+		t.Fatalf("infos = %d, want %d", len(infos), len(changes))
+	}
+	mu.Lock()
+	gotMax := maxCurrent
+	mu.Unlock()
+	if gotMax > whoisLookupConcurrency {
+		t.Errorf("max concurrent lookups = %d, want <= %d", gotMax, whoisLookupConcurrency)
+	}
+}
+
+func TestNeedsTLDWhois(t *testing.T) {
+	slack := notify.NewSlackNotifier("https://example.com/webhook")
+	twitter := notify.NewTwitterNotifier("key", "secret", "token", "tokensecret")
+	bluesky := notify.NewBlueskyNotifier(config.BlueskyConfig{
+		Handle:      "user.bsky.social",
+		AppPassword: "app-password",
+	})
+
+	tests := []struct {
+		name      string
+		notifiers []notify.Notifier
+		want      bool
+	}{
+		{name: "none", notifiers: nil, want: false},
+		{name: "slack only", notifiers: []notify.Notifier{slack}, want: false},
+		{name: "with twitter", notifiers: []notify.Notifier{slack, twitter}, want: true},
+		{name: "with bluesky", notifiers: []notify.Notifier{bluesky}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := needsTLDWhois(tt.notifiers); got != tt.want {
+				t.Errorf("needsTLDWhois() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
