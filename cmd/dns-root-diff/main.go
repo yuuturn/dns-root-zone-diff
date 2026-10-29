@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -400,10 +401,11 @@ func runTLDOnce(ctx context.Context, cfg config.Config, configPath string) error
 		} else if hadPrevious {
 			fmt.Printf("%d substantive TLD changes\n", len(substantive))
 			notifiers := buildNotifiers(cfg, configPath)
-			// WHOIS のリプライは X / BlueSky のみ対応している。どちらも
-			// 無効な構成では外部へ問い合わせない。
+			// WHOIS のリプライは X / BlueSky のみ対応している。config の
+			// enabled フラグではなく、実際に構成された notifier で判定する
+			// (認証情報不足で notifier が作られない場合に無駄な問い合わせをしない)。
 			var infos map[string]whois.Info
-			if len(notifiers) > 0 && (cfg.Twitter.Enabled || cfg.Bluesky.Enabled) {
+			if needsTLDWhois(notifiers) {
 				infos = lookupTLDWhois(ctx, substantive, whois.Lookup)
 			}
 			for _, n := range notifiers {
@@ -431,10 +433,29 @@ func runTLDOnce(ctx context.Context, cfg config.Config, configPath string) error
 	return nil
 }
 
+// needsTLDWhois は WHOIS リプライに対応する notifier (X / BlueSky) が実際に
+// 構成されているかを返す。config の enabled フラグだけでは、認証情報不足で
+// buildNotifiers が notifier を作らないケースを検出できない。
+func needsTLDWhois(notifiers []notify.Notifier) bool {
+	for _, n := range notifiers {
+		switch n.(type) {
+		case *notify.TwitterNotifier, *notify.BlueskyNotifier:
+			return true
+		}
+	}
+	return false
+}
+
+// whoisLookupConcurrency は WHOIS 問い合わせの同時実行数。
+// 新 gTLD の一括追加などで変更が大量になっても、1件ずつ直列に待たず、
+// かつ whois.iana.org を過度に叩かない値にしている。
+const whoisLookupConcurrency = 4
+
 // lookupTLDWhois は TLD の追加・削除について WHOIS 情報を引く。
 // lookup はテストで差し替える。失敗した TLD はリプライを省略する。
 func lookupTLDWhois(ctx context.Context, changes []diff.Change, lookup func(context.Context, string) (whois.Info, error)) map[string]whois.Info {
-	infos := make(map[string]whois.Info)
+	var names []string
+	seen := make(map[string]bool)
 	for _, c := range changes {
 		if c.Type != diff.TypeTLD {
 			continue
@@ -442,14 +463,40 @@ func lookupTLDWhois(ctx context.Context, changes []diff.Change, lookup func(cont
 		if c.Kind != diff.ChangeAdded && c.Kind != diff.ChangeRemoved {
 			continue
 		}
-		tld := strings.TrimSuffix(c.Name, ".")
-		info, err := lookup(ctx, tld)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "whois lookup for %s failed: %v\n", tld, err)
+		tldName := strings.TrimSuffix(c.Name, ".")
+		if seen[tldName] {
 			continue
 		}
-		infos[tld] = info
+		seen[tldName] = true
+		names = append(names, tldName)
 	}
+
+	infos := make(map[string]whois.Info)
+	var mu sync.Mutex
+	sem := make(chan struct{}, whoisLookupConcurrency)
+	var wg sync.WaitGroup
+	for _, tldName := range names {
+		wg.Add(1)
+		go func(tldName string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
+
+			info, err := lookup(ctx, tldName)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "whois lookup for %s failed: %v\n", tldName, err)
+				return
+			}
+			mu.Lock()
+			infos[tldName] = info
+			mu.Unlock()
+		}(tldName)
+	}
+	wg.Wait()
 	return infos
 }
 

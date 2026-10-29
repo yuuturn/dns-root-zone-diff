@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -84,6 +85,11 @@ func (n *BlueskyNotifier) NotifyTLDs(ctx context.Context, changes []diff.Change,
 		return err
 	}
 	if last.URI == "" || last.CID == "" {
+		// 投稿自体は成功しているが、リプライに必要な strong ref が揃わない場合は
+		// 静かにスキップせず原因を残す。
+		if last.URI != "" {
+			fmt.Fprintf(os.Stderr, "bluesky: createRecord response missing cid; skip WHOIS replies\n")
+		}
 		return nil
 	}
 

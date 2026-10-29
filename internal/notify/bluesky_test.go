@@ -488,6 +488,42 @@ func TestBlueskyNotifyTLDs(t *testing.T) {
 	}
 }
 
+func TestBlueskyNotifyTLDsSkipsReplyWithoutCID(t *testing.T) {
+	var createRecords int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/xrpc/com.atproto.server.createSession" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"did":"did:plc:123","accessJwt":"jwt"}`))
+			return
+		}
+		if r.URL.Path == "/xrpc/com.atproto.repo.createRecord" {
+			createRecords++
+			w.WriteHeader(http.StatusOK)
+			// cid が無い応答ではリプライの strong ref を作れない。
+			_, _ = w.Write([]byte(`{"uri":"at://did:plc:123/app.bsky.feed.post/abc"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	n := NewBlueskyNotifier(config.BlueskyConfig{
+		Handle:       "user.bsky.social",
+		AppPassword:  "app-pass",
+		APIURL:       srv.URL + "/xrpc",
+		MaxPostChars: 300,
+	})
+	err := n.NotifyTLDs(context.Background(), []diff.Change{
+		{Kind: diff.ChangeRemoved, Name: "helsinki.", Type: diff.TypeTLD},
+	}, helsinkiInfos())
+	if err != nil {
+		t.Fatalf("NotifyTLDs() error = %v", err)
+	}
+	if createRecords != 1 {
+		t.Errorf("createRecord calls = %d, want 1 (notification only, no reply)", createRecords)
+	}
+}
+
 func TestBlueskyNotifyTLDsWithWhoisReply(t *testing.T) {
 	type strongRef struct {
 		URI string `json:"uri"`

@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -154,6 +155,11 @@ func (tw *TwitterNotifier) NotifyTLDs(ctx context.Context, changes []diff.Change
 		return err
 	}
 	if lastID == "" {
+		// 通知本体が投稿されたのに ID が取得できない場合は、リプライを
+		// 付けられない理由を残す。
+		if len(posts) > 0 {
+			fmt.Fprintf(os.Stderr, "twitter: tweet response missing id; skip WHOIS replies\n")
+		}
 		return nil
 	}
 
