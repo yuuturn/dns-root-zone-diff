@@ -592,3 +592,58 @@ anchor_url: "https://example.com/root-anchors.xml"
 		t.Errorf("AnchorURL = %q", cfg.AnchorURL)
 	}
 }
+
+func TestDefaultTLDURL(t *testing.T) {
+	cfg := Default()
+	if cfg.TLDURL != "https://data.iana.org/TLD/tlds-alpha-by-domain.txt" {
+		t.Errorf("TLDURL = %q", cfg.TLDURL)
+	}
+}
+
+func TestLoadTLDURLEnv(t *testing.T) {
+	t.Setenv("DNS_ROOT_DIFF_TLD_URL", "http://127.0.0.1:9999/tlds.txt")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TLDURL != "http://127.0.0.1:9999/tlds.txt" {
+		t.Errorf("TLDURL = %q", cfg.TLDURL)
+	}
+}
+
+func TestLoadTLDURLFromFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+tld_url: "https://example.com/tlds.txt"
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.TLDURL != "https://example.com/tlds.txt" {
+		t.Errorf("TLDURL = %q", cfg.TLDURL)
+	}
+}
+
+func TestLoadTLDURLExplicitEmptyDisables(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+tld_url: ""
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	// 明示的な空文字はデフォルトで上書きされず、TLD 監視の無効化を意味する。
+	if cfg.TLDURL != "" {
+		t.Errorf("TLDURL = %q, want empty (tld monitoring disabled)", cfg.TLDURL)
+	}
+}

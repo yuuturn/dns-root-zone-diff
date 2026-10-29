@@ -36,12 +36,18 @@ type HistoryReader interface {
 type Server struct {
 	history       HistoryReader // root zone の差分履歴
 	anchorHistory HistoryReader // root anchors の差分履歴
+	tldHistory    HistoryReader // TLD リストの差分履歴
 	static        fs.FS
 }
 
 // New は Server を生成する。static はフロントエンドのビルド成果物。
-func New(history, anchorHistory HistoryReader, static fs.FS) *Server {
-	return &Server{history: history, anchorHistory: anchorHistory, static: static}
+func New(history, anchorHistory, tldHistory HistoryReader, static fs.FS) *Server {
+	return &Server{
+		history:       history,
+		anchorHistory: anchorHistory,
+		tldHistory:    tldHistory,
+		static:        static,
+	}
 }
 
 // Handler はルーティング済みの http.Handler を返す。
@@ -51,6 +57,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/diffs/{id}", s.handleGetDiff)
 	mux.HandleFunc("GET /api/anchors/diffs", s.handleListAnchorDiffs)
 	mux.HandleFunc("GET /api/anchors/diffs/{id}", s.handleGetAnchorDiff)
+	mux.HandleFunc("GET /api/tlds/diffs", s.handleListTLDDiffs)
+	mux.HandleFunc("GET /api/tlds/diffs/{id}", s.handleGetTLDDiff)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	// 未定義の API パスは SPA フォールバックさせず 404 を返す。
 	mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +90,10 @@ func (s *Server) handleListDiffs(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListAnchorDiffs(w http.ResponseWriter, r *http.Request) {
 	s.handleList(w, r, s.anchorHistory)
+}
+
+func (s *Server) handleListTLDDiffs(w http.ResponseWriter, r *http.Request) {
+	s.handleList(w, r, s.tldHistory)
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request, history HistoryReader) {
@@ -159,6 +171,10 @@ func (s *Server) handleGetDiff(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetAnchorDiff(w http.ResponseWriter, r *http.Request) {
 	s.handleGet(w, r, s.anchorHistory)
+}
+
+func (s *Server) handleGetTLDDiff(w http.ResponseWriter, r *http.Request) {
+	s.handleGet(w, r, s.tldHistory)
 }
 
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, history HistoryReader) {

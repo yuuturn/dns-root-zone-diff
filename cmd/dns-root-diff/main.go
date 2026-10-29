@@ -22,6 +22,7 @@ import (
 	"github.com/yfujii/dns-root-diff/internal/notify"
 	"github.com/yfujii/dns-root-diff/internal/store"
 	"github.com/yfujii/dns-root-diff/internal/telemetry"
+	"github.com/yfujii/dns-root-diff/internal/tld"
 	"github.com/yfujii/dns-root-diff/internal/web"
 	"github.com/yfujii/dns-root-diff/internal/zone"
 )
@@ -75,7 +76,12 @@ func runLoop(cfg config.Config, configPath string) error {
 	webErr := make(chan error, 1)
 	if cfg.Web.Enabled {
 		srv := &http.Server{
-			Handler: newHTTPHandler(web.New(store.NewHistory(cfg.DataDir), store.NewAnchorHistory(cfg.DataDir), web.StaticFS()).Handler()),
+			Handler: newHTTPHandler(web.New(
+				store.NewHistory(cfg.DataDir),
+				store.NewAnchorHistory(cfg.DataDir),
+				store.NewTLDHistory(cfg.DataDir),
+				web.StaticFS(),
+			).Handler()),
 		}
 		// ポート競合や不正なアドレスを起動時に即検出できるよう bind は同期で行う。
 		ln, err := net.Listen("tcp", cfg.Web.Listen)
@@ -166,7 +172,10 @@ func runOnce(ctx context.Context, cfg config.Config, configPath string) error {
 	if err := runZoneOnce(ctx, cfg, configPath); err != nil {
 		return err
 	}
-	return runAnchorOnce(ctx, cfg, configPath)
+	if err := runAnchorOnce(ctx, cfg, configPath); err != nil {
+		return err
+	}
+	return runTLDOnce(ctx, cfg, configPath)
 }
 
 func runZoneOnce(ctx context.Context, cfg config.Config, configPath string) error {
@@ -326,6 +335,88 @@ func runAnchorOnce(ctx context.Context, cfg config.Config, configPath string) er
 
 	if err := s.Save(data); err != nil {
 		return fmt.Errorf("save root anchors: %w", err)
+	}
+
+	return nil
+}
+
+// runTLDOnce は IANA の TLD リストを取得し、差分があれば通知・履歴記録を行う。
+// TLDURL が空の場合は何もしない。
+//
+// zone / root anchors と同様に、初回実行 (前回スナップショットなし) は
+// ベースラインとしてスナップショット保存のみ行い、通知も履歴記録も行わない。
+func runTLDOnce(ctx context.Context, cfg config.Config, configPath string) error {
+	if cfg.TLDURL == "" {
+		return nil
+	}
+	ctx, span := telemetry.Tracer().Start(ctx, "tld.run")
+	defer span.End()
+	span.SetAttributes(attribute.String("tld.url", cfg.TLDURL))
+
+	fmt.Printf("fetching TLD list from %s\n", cfg.TLDURL)
+
+	f := fetcher.New(cfg.TLDURL, 2*time.Minute)
+	data, err := f.Fetch(ctx)
+	if err != nil {
+		return fmt.Errorf("fetch TLD list: %w", err)
+	}
+
+	list, err := tld.Parse(data)
+	if err != nil {
+		return fmt.Errorf("parse TLD list: %w", err)
+	}
+	span.SetAttributes(attribute.Int("tld.count", len(list.TLDs)))
+	fmt.Printf("parsed %d TLDs\n", len(list.TLDs))
+
+	s := store.NewTLD(cfg.DataDir)
+	hadPrevious := s.Exists()
+
+	var oldList tld.List
+	if hadPrevious {
+		oldData, err := s.Load()
+		if err != nil {
+			return fmt.Errorf("load previous TLD list: %w", err)
+		}
+		oldList, err = tld.Parse(oldData)
+		if err != nil {
+			return fmt.Errorf("parse previous TLD list: %w", err)
+		}
+	}
+
+	changes := tld.Diff(oldList, list)
+	diff.SortChanges(changes)
+	span.SetAttributes(attribute.Int("tld.changes", len(changes)))
+	if len(changes) == 0 {
+		fmt.Println("no TLD changes detected")
+	} else {
+		fmt.Printf("detected %d TLD changes\n", len(changes))
+		// TLD リストに再署名のような機械的変更は無いが、通知方針を zone /
+		// anchors と揃えるため Substantive で絞ってから通知する。
+		if substantive := diff.Substantive(changes); len(substantive) == 0 {
+			fmt.Println("TLD changes are all mechanical; skipping notification")
+		} else if hadPrevious {
+			fmt.Printf("%d substantive TLD changes\n", len(substantive))
+			notifiers := buildNotifiers(cfg, configPath)
+			for _, n := range notifiers {
+				if err := n.NotifyTLDs(ctx, substantive); err != nil {
+					fmt.Fprintf(os.Stderr, "notify %s (TLDs) failed: %v\n", n.Name(), err)
+				}
+			}
+		}
+		// 初回実行 (前回スナップショットなし) は全 TLD が added になるため履歴には残さない。
+		if hadPrevious {
+			oldSerial := tld.Serial(oldList)
+			newSerial := tld.Serial(list)
+			h := store.NewTLDHistory(cfg.DataDir)
+			entry := store.NewEntry(time.Now().UTC(), oldSerial, newSerial, changes)
+			if err := h.Append(entry); err != nil {
+				fmt.Fprintf(os.Stderr, "record TLD history failed: %v\n", err)
+			}
+		}
+	}
+
+	if err := s.Save(data); err != nil {
+		return fmt.Errorf("save TLD list: %w", err)
 	}
 
 	return nil

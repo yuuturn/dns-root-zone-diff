@@ -55,27 +55,32 @@ func (n *BlueskyNotifier) Name() string {
 // 載せるため、再署名ノイズに混ざった SOA 変更をここで落としてはいけない
 // (実質的な変更の絞り込みは FormatPosts が行う)。
 func (n *BlueskyNotifier) Notify(ctx context.Context, changes []diff.Change) error {
-	texts := FormatPosts(changes, FormatOptions{
+	return n.notify(ctx, FormatPosts(changes, FormatOptions{
 		MaxLen:    n.cfg.MaxPostChars,
 		Numbering: true,
-	})
-	if len(texts) == 0 {
-		return nil
-	}
-
-	if err := n.ensureSession(ctx); err != nil {
-		return fmt.Errorf("createSession: %w", err)
-	}
-	return n.postRecords(ctx, texts)
+	}))
 }
 
 // NotifyAnchors は root anchors の変更を BlueSky に投稿する。
 // 実質的な変更がない場合は何も投稿しない。
 func (n *BlueskyNotifier) NotifyAnchors(ctx context.Context, changes []diff.Change) error {
-	texts := FormatPosts(changes, anchorFormatOptions(FormatOptions{
+	return n.notify(ctx, FormatPosts(changes, anchorFormatOptions(FormatOptions{
 		MaxLen:    n.cfg.MaxPostChars,
 		Numbering: true,
-	}))
+	})))
+}
+
+// NotifyTLDs は TLD リストの変更を BlueSky に投稿する。
+// 実質的な変更がない場合は何も投稿しない。
+func (n *BlueskyNotifier) NotifyTLDs(ctx context.Context, changes []diff.Change) error {
+	return n.notify(ctx, FormatPosts(changes, tldFormatOptions(FormatOptions{
+		MaxLen:    n.cfg.MaxPostChars,
+		Numbering: true,
+	})))
+}
+
+// notify は texts を順に投稿する。テキストが無ければ何もしない。
+func (n *BlueskyNotifier) notify(ctx context.Context, texts []string) error {
 	if len(texts) == 0 {
 		return nil
 	}

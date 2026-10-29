@@ -15,8 +15,10 @@ import { useParams } from "react-router-dom";
 import {
   fetchAnchorDiff,
   fetchDiff,
+  fetchTLDDiff,
   formatDetectedAt,
   type Change,
+  type DetailQuery,
   type DiffEntry,
   type KeyInfo,
 } from "../api.ts";
@@ -24,6 +26,38 @@ import { CategoryBadge, KindBadge, SummaryBadges } from "../components/badges.ts
 
 // 詳細 API の既定ページング件数 (サーバ側 defaultDetailPerPage と一致させる)
 const DETAIL_PER_PAGE = 100;
+
+export type DetailVariant = "zone" | "anchors" | "tlds";
+
+// variant ごとの詳細 API。
+const detailFetchers: Record<
+  DetailVariant,
+  (id: string, query?: DetailQuery) => Promise<DiffEntry>
+> = {
+  zone: fetchDiff,
+  anchors: fetchAnchorDiff,
+  tlds: fetchTLDDiff,
+};
+
+// variant ごとの一覧リンクと serial 相当フィールドの見出し。
+const detailLabels: Record<
+  DetailVariant,
+  { listPath: string; listName: string; previous: string; next: string }
+> = {
+  zone: { listPath: "/", listName: "Diffs", previous: "Previous serial", next: "New serial" },
+  anchors: {
+    listPath: "/anchors",
+    listName: "Anchors",
+    previous: "Previous anchor id",
+    next: "New anchor id",
+  },
+  tlds: {
+    listPath: "/tlds",
+    listName: "TLDs",
+    previous: "Previous version",
+    next: "New version",
+  },
+};
 
 // ALL_TAB は「すべて」タブの値。それ以外は API の category 値をそのまま使う。
 const ALL_TAB = "all";
@@ -178,7 +212,7 @@ function formatKeyAnnotation(key?: KeyInfo): string {
   return s;
 }
 
-export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "anchors" }) {
+export function DiffDetailPage({ variant = "zone" }: { variant?: DetailVariant }) {
   const { id } = useParams<{ id: string }>();
   const [entry, setEntry] = useState<DiffEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -186,13 +220,13 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
   const [tab, setTab] = useState(() => tabFromHash(window.location.hash));
   const [page, setPage] = useState(1);
   const tabsRef = useRef<HTMLDivElement>(null);
-  const isAnchors = variant === "anchors";
+  const labels = detailLabels[variant];
 
-  // エントリ (id) が変わったらタブとページを初期化する。
+  // エントリ (id) またはタブ種別 (variant) が変わったらタブとページを初期化する。
   // render 中の state 調整で行うことで、effect は初期化後の値で 1 回だけ走る。
-  const [prevId, setPrevId] = useState(id);
-  if (prevId !== id) {
-    setPrevId(id);
+  const [prevKey, setPrevKey] = useState({ id, variant });
+  if (prevKey.id !== id || prevKey.variant !== variant) {
+    setPrevKey({ id, variant });
     setEntry(null);
     setError(null);
     setTab(tabFromHash(window.location.hash));
@@ -240,8 +274,7 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
     let cancelled = false;
     // ページ・タブ切替時は前の内容を表示し続け、応答が来たら差し替える
     // (都度ローダーを出すより体感が良い。順序乱れは cancelled で防ぐ)。
-    const fetch = isAnchors ? fetchAnchorDiff : fetchDiff;
-    fetch(id, {
+    detailFetchers[variant](id, {
       category: tab === ALL_TAB ? undefined : tab,
       page: page,
       perPage: DETAIL_PER_PAGE,
@@ -265,15 +298,13 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
     return () => {
       cancelled = true;
     };
-  }, [id, isAnchors, tab, page]);
+  }, [id, variant, tab, page]);
 
   if (error) {
     return (
       <div className="stack">
         <Breadcrumbs>
-          <Breadcrumbs.Link href={isAnchors ? "/anchors" : "/"}>
-            {isAnchors ? "Anchors" : "Diffs"}
-          </Breadcrumbs.Link>
+          <Breadcrumbs.Link href={labels.listPath}>{labels.listName}</Breadcrumbs.Link>
           <Breadcrumbs.Separator />
           <Breadcrumbs.Current>{id}</Breadcrumbs.Current>
         </Breadcrumbs>
@@ -308,9 +339,7 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
   return (
     <div className="stack">
       <Breadcrumbs>
-        <Breadcrumbs.Link href={isAnchors ? "/anchors" : "/"}>
-          {isAnchors ? "Anchors" : "Diffs"}
-        </Breadcrumbs.Link>
+        <Breadcrumbs.Link href={labels.listPath}>{labels.listName}</Breadcrumbs.Link>
         <Breadcrumbs.Separator />
         <Breadcrumbs.Current>{entry.new_serial}</Breadcrumbs.Current>
       </Breadcrumbs>
@@ -324,13 +353,13 @@ export function DiffDetailPage({ variant = "zone" }: { variant?: "zone" | "ancho
           <div className="meta-grid">
             <div>
               <Text variant="secondary" size="sm">
-                {isAnchors ? "Previous anchor id" : "Previous serial"}
+                {labels.previous}
               </Text>
               <Text variant="mono">{entry.old_serial || "-"}</Text>
             </div>
             <div>
               <Text variant="secondary" size="sm">
-                {isAnchors ? "New anchor id" : "New serial"}
+                {labels.next}
               </Text>
               <Text variant="mono">{entry.new_serial}</Text>
             </div>

@@ -493,3 +493,30 @@ func TestTwitterNotifyAnchors(t *testing.T) {
 		t.Errorf("text should include the key id:\n%s", received["text"])
 	}
 }
+
+func TestTwitterNotifyTLDs(t *testing.T) {
+	var received map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &received)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"data":{"id":"123"}}`))
+	}))
+	defer srv.Close()
+
+	n := NewTwitterNotifier("key", "secret", "token", "tokensecret")
+	n.apiURL = srv.URL
+
+	err := n.NotifyTLDs(context.Background(), []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "newgtld.", Type: diff.TypeTLD},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(received["text"], "DNS TLD List changes") {
+		t.Errorf("text = %q, want TLD title", received["text"])
+	}
+	if !strings.Contains(received["text"], "+ newgtld. TLD") {
+		t.Errorf("text should include the new TLD:\n%s", received["text"])
+	}
+}

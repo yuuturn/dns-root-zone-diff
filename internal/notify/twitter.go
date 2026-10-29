@@ -118,20 +118,7 @@ func (tw *TwitterNotifier) Notify(ctx context.Context, changes []diff.Change) er
 		Weighted:        true,
 		CompactOverview: true,
 	})
-
-	for i, msg := range posts {
-		if i > 0 && tw.postDelay > 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(tw.postDelay):
-			}
-		}
-		if err := tw.postTweet(ctx, msg); err != nil {
-			return fmt.Errorf("post tweet %d/%d: %w", i+1, len(posts), err)
-		}
-	}
-	return nil
+	return tw.postPosts(ctx, posts, "post tweet")
 }
 
 // NotifyAnchors は root anchors の変更を X にツイートする。
@@ -144,7 +131,24 @@ func (tw *TwitterNotifier) NotifyAnchors(ctx context.Context, changes []diff.Cha
 		Weighted:        true,
 		CompactOverview: true,
 	}))
+	return tw.postPosts(ctx, posts, "post anchor tweet")
+}
 
+// NotifyTLDs は TLD リストの変更を X にツイートする。
+// X の 280 字制限に合わせて serial / re-signing 行を省いた圧縮概要を使う。
+func (tw *TwitterNotifier) NotifyTLDs(ctx context.Context, changes []diff.Change) error {
+	posts := FormatPosts(changes, tldFormatOptions(FormatOptions{
+		MaxLen:          tweetMaxLen,
+		MaxParts:        tw.maxPosts,
+		Numbering:       true,
+		Weighted:        true,
+		CompactOverview: true,
+	}))
+	return tw.postPosts(ctx, posts, "post TLD tweet")
+}
+
+// postPosts は posts を順に投稿する。連投時は postDelay だけ間隔を空ける。
+func (tw *TwitterNotifier) postPosts(ctx context.Context, posts []string, prefix string) error {
 	for i, msg := range posts {
 		if i > 0 && tw.postDelay > 0 {
 			select {
@@ -154,7 +158,7 @@ func (tw *TwitterNotifier) NotifyAnchors(ctx context.Context, changes []diff.Cha
 			}
 		}
 		if err := tw.postTweet(ctx, msg); err != nil {
-			return fmt.Errorf("post anchor tweet %d/%d: %w", i+1, len(posts), err)
+			return fmt.Errorf("%s %d/%d: %w", prefix, i+1, len(posts), err)
 		}
 	}
 	return nil

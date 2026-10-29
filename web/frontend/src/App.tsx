@@ -48,6 +48,12 @@ export function App() {
         >
           Root Anchors
         </NavLink>
+        <NavLink
+          to="/tlds"
+          className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+        >
+          TLDs
+        </NavLink>
       </nav>
       <Outlet />
     </div>

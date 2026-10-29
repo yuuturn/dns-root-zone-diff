@@ -207,3 +207,29 @@ func TestSlackNotifyAnchors(t *testing.T) {
 		t.Errorf("text should include the key id:\n%s", got)
 	}
 }
+
+func TestSlackNotifyTLDs(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]string
+		_ = json.Unmarshal(body, &payload)
+		got = payload["text"]
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	n := NewSlackNotifier(srv.URL)
+	err := n.NotifyTLDs(context.Background(), []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "newgtld.", Type: diff.TypeTLD},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(got, "DNS TLD List changes") {
+		t.Errorf("text = %q, want TLD title", got)
+	}
+	if !strings.Contains(got, "+ newgtld. TLD") {
+		t.Errorf("text should include the new TLD:\n%s", got)
+	}
+}

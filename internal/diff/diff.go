@@ -7,6 +7,11 @@ import (
 	"github.com/yfujii/dns-root-diff/internal/zone"
 )
 
+// TypeTLD は IANA の TLD リスト監視で使う擬似 RR type。
+// TLD リストには RR type が無いため、各 TLD を1レコードとして既存の
+// diff エンジンに流す。
+const TypeTLD = "TLD"
+
 // ChangeKind は変更の種類。
 type ChangeKind int
 
@@ -39,6 +44,7 @@ const (
 	CategoryOther                      // その他
 	CategorySignature                  // 再署名 (RRSIG)
 	CategoryZone                       // ゾーン管理 (SOA, ZONEMD)
+	CategoryTLD                        // TLD リスト (擬似 RR type TLD)
 )
 
 func (c Category) String() string {
@@ -55,6 +61,8 @@ func (c Category) String() string {
 		return "signature"
 	case CategoryZone:
 		return "zone"
+	case CategoryTLD:
+		return "TLD"
 	default:
 		return "unknown"
 	}
@@ -67,6 +75,7 @@ var categoryOrder = []Category{
 	CategoryGlue,
 	CategoryZone,
 	CategorySignature,
+	CategoryTLD,
 	CategoryOther,
 }
 
@@ -238,6 +247,8 @@ func Categorize(c Change) Category {
 		return CategorySignature
 	case "SOA", "ZONEMD":
 		return CategoryZone
+	case TypeTLD:
+		return CategoryTLD
 	default:
 		return CategoryOther
 	}

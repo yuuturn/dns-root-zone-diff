@@ -269,6 +269,61 @@ func TestAnchorHistoryRejectsBadID(t *testing.T) {
 	}
 }
 
+func TestTLDHistoryAppendListGet(t *testing.T) {
+	dir := t.TempDir()
+	h := NewTLDHistory(dir)
+	e := NewEntry(time.Date(2026, 10, 29, 7, 30, 0, 0, time.UTC), "2026102800", "2026102900", []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "new.", Type: diff.TypeTLD},
+	})
+	if err := h.Append(e); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+	entries, err := h.List()
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("List() = %d entries, %v", len(entries), err)
+	}
+	if entries[0].NewSerial != "2026102900" {
+		t.Errorf("NewSerial = %q, want version", entries[0].NewSerial)
+	}
+	got, err := h.Get(entries[0].ID)
+	if err != nil || got.ID != entries[0].ID {
+		t.Fatalf("Get() = %+v, %v", got, err)
+	}
+	// zone / root anchors の履歴とは別ディレクトリであること
+	if zs, _ := NewHistory(dir).List(); len(zs) != 0 {
+		t.Errorf("zone history should be empty, got %d", len(zs))
+	}
+	if as, _ := NewAnchorHistory(dir).List(); len(as) != 0 {
+		t.Errorf("anchor history should be empty, got %d", len(as))
+	}
+}
+
+func TestNewEntryOmitsTTLForTLD(t *testing.T) {
+	// TLD 擬似レコードは TTL を持たない。Web UI に "TTL 0" を出さないため
+	// TTL フィールド自体を JSON に含めない。
+	e := NewEntry(time.Date(2026, 10, 29, 7, 30, 0, 0, time.UTC), "2026102800", "2026102900", []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "new.", Type: diff.TypeTLD},
+		{Kind: diff.ChangeRemoved, Name: "old.", Type: diff.TypeTLD},
+	})
+	if e.Summary.ByCategory["TLD"] != 2 {
+		t.Errorf("ByCategory[TLD] = %d, want 2", e.Summary.ByCategory["TLD"])
+	}
+	for _, c := range e.Changes {
+		if c.OldTTL != nil || c.NewTTL != nil {
+			t.Errorf("TLD change should not carry a TTL: %+v", c)
+		}
+	}
+	data, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"old_ttl", "new_ttl"} {
+		if strings.Contains(string(data), field) {
+			t.Errorf("marshalled TLD entry contains %q:\n%s", field, data)
+		}
+	}
+}
+
 // root zone の DNSKEY (IANA 公開値: KSK 20326 / ZSK 8763)。
 const (
 	testKeyKSK = "257 3 8 AwEAAaz/tAm8yTn4Mfeh5eyI96WSVexTBAvkMgJzkKTOiW1vkIbzxeF3+/4RgWOq7HrxRixHlFlExOLAJr5emLvN7SWXgnLh4+B5xQlNVz8Og8kvArMtNROxVQuCaSnIDdD5LKyWbRd2n9WGe2R8PzgCmr3EgVLrjyBxWezF0jLHwVN8efS3rCj/EWgvIWgb9tarpVUDK/b58Da+sqqls3eNbuv7pr+eoZG+SrDK6nWeL3c6H5Apxz7LjVc1uTIdsIXxuOLYA4/ilBmSVIzuDWfdRUfhHdY6+cn8HFRm+2hM8AnXGXws9555KrUB5qihylGa8subX2Nn6UwNR1AkUTV74bU="

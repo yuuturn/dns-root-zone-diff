@@ -84,6 +84,29 @@ func TestAnchorStoreSaveLoad(t *testing.T) {
 	}
 }
 
+func TestTLDStoreSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	s := NewTLD(dir)
+	if s.Exists() {
+		t.Error("tld store should not exist initially")
+	}
+	want := "# Version 2026102900\nCOM\n"
+	if err := s.Save([]byte(want)); err != nil {
+		t.Fatal(err)
+	}
+	if !s.Exists() {
+		t.Error("tld store should exist after save")
+	}
+	data, err := s.Load()
+	if err != nil || string(data) != want {
+		t.Fatalf("Load() = %q, %v", data, err)
+	}
+	// zone / anchors のスナップショットと競合しないこと。
+	if New(dir).Exists() || NewAnchor(dir).Exists() {
+		t.Error("tld store must use its own snapshot file")
+	}
+}
+
 func TestSaveLeavesNoTempFiles(t *testing.T) {
 	dir := t.TempDir()
 	s := New(dir)

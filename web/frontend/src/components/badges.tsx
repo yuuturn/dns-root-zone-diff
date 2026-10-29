@@ -20,6 +20,7 @@ const categoryVariant: Record<
   glue: "blue",
   signature: "orange",
   zone: "neutral",
+  TLD: "purple",
 };
 
 export function CategoryBadge({ category }: { category: string }) {
