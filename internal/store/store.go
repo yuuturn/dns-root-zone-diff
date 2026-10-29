@@ -10,6 +10,8 @@ const zoneFileName = "root.zone"
 
 const anchorFileName = "root-anchors.xml"
 
+const tldFileName = "tlds-alpha-by-domain.txt"
+
 // Store はゾーンファイルをローカルディスクに永続化する。
 type Store struct {
 	dir  string
@@ -29,6 +31,14 @@ func NewAnchor(dir string) *Store {
 	return &Store{
 		dir:  dir,
 		path: filepath.Join(dir, anchorFileName),
+	}
+}
+
+// NewTLD は TLD リストスナップショット用の Store を生成する。
+func NewTLD(dir string) *Store {
+	return &Store{
+		dir:  dir,
+		path: filepath.Join(dir, tldFileName),
 	}
 }
 

@@ -100,6 +100,16 @@ export function fetchAnchorDiff(id: string, query?: DetailQuery): Promise<DiffEn
   return getJSON(`/api/anchors/diffs/${encodeURIComponent(id)}${detailQueryString(query)}`);
 }
 
+// TLD リストの差分も zone と JSON 形状が同じ (serial フィールドに TLD リストの
+// Version が入る)。
+export function fetchTLDDiffs(page: number, perPage: number): Promise<DiffListResponse> {
+  return getJSON(`/api/tlds/diffs?page=${page}&per_page=${perPage}`);
+}
+
+export function fetchTLDDiff(id: string, query?: DetailQuery): Promise<DiffEntry> {
+  return getJSON(`/api/tlds/diffs/${encodeURIComponent(id)}${detailQueryString(query)}`);
+}
+
 export function formatDetectedAt(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;

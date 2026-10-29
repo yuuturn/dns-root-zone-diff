@@ -21,6 +21,7 @@ const defaultBlueskyMaxPostChars = 300
 type Config struct {
 	ZoneURL       string        `yaml:"zone_url"`
 	AnchorURL     string        `yaml:"anchor_url"`
+	TLDURL        string        `yaml:"tld_url"`
 	FetchInterval time.Duration `yaml:"fetch_interval"`
 	DataDir       string        `yaml:"data_dir"`
 	Slack         SlackConfig   `yaml:"slack"`
@@ -69,6 +70,7 @@ func Default() Config {
 	return Config{
 		ZoneURL:       "https://www.internic.net/domain/root.zone",
 		AnchorURL:     "https://data.iana.org/root-anchors/root-anchors.xml",
+		TLDURL:        "https://data.iana.org/TLD/tlds-alpha-by-domain.txt",
 		FetchInterval: 2 * time.Hour,
 		DataDir:       "./data",
 		Twitter: TwitterConfig{
@@ -236,6 +238,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("DNS_ROOT_DIFF_ANCHOR_URL"); v != "" {
 		cfg.AnchorURL = v
+	}
+	if v := os.Getenv("DNS_ROOT_DIFF_TLD_URL"); v != "" {
+		cfg.TLDURL = v
 	}
 	if v := os.Getenv("DNS_ROOT_DIFF_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {

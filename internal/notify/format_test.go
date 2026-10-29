@@ -892,6 +892,21 @@ func TestFormatPostsCustomTitleAndRDataLen(t *testing.T) {
 	}
 }
 
+func TestFormatPostsTLDChanges(t *testing.T) {
+	changes := []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "new.", Type: diff.TypeTLD},
+		{Kind: diff.ChangeRemoved, Name: "old.", Type: diff.TypeTLD},
+	}
+	posts := FormatPosts(changes, tldFormatOptions(FormatOptions{MaxLen: 280, Numbering: true}))
+	if len(posts) != 1 {
+		t.Fatalf("posts = %d, want 1:\n%s", len(posts), strings.Join(posts, "\n---\n"))
+	}
+	want := "DNS TLD List changes\nTLD 2\n\n[TLD]\n  + new. TLD\n  - old. TLD"
+	if posts[0] != want {
+		t.Errorf("post =\n%q\nwant:\n%q", posts[0], want)
+	}
+}
+
 func TestFormatPostsDefaultTitle(t *testing.T) {
 	changes := []diff.Change{
 		{Kind: diff.ChangeAdded, Name: "example.", Type: "NS", NewRData: "a.nic.example."},

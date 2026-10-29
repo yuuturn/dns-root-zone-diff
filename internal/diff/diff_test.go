@@ -221,6 +221,11 @@ func TestCategorize(t *testing.T) {
 			wantCat: CategoryGlue,
 		},
 		{
+			name:    "TLD record added is TLD",
+			change:  Change{Kind: ChangeAdded, Name: "com.", Type: TypeTLD},
+			wantCat: CategoryTLD,
+		},
+		{
 			name:    "TXT record added is other",
 			change:  Change{Kind: ChangeAdded, Name: "example.", Type: "TXT", NewRData: "v=spf1"},
 			wantCat: CategoryOther,
@@ -584,7 +589,7 @@ func TestCategoriesIsACopyAndCoversEveryCategory(t *testing.T) {
 		}
 		seen[cat] = true
 	}
-	for _, rrType := range []string{"NS", "DS", "DNSKEY", "NSEC", "NSEC3", "NSEC3PARAM", "CDS", "CDNSKEY", "A", "AAAA", "RRSIG", "SOA", "ZONEMD", "TXT"} {
+	for _, rrType := range []string{"NS", "DS", "DNSKEY", "NSEC", "NSEC3", "NSEC3PARAM", "CDS", "CDNSKEY", "A", "AAAA", "RRSIG", "SOA", "ZONEMD", TypeTLD, "TXT"} {
 		cat := Categorize(Change{Type: rrType})
 		if !seen[cat] {
 			t.Errorf("Categories() is missing %v (from %s)", cat, rrType)

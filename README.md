@@ -8,12 +8,13 @@ A tool that mechanically detects changes to the DNS root zone file and sends not
 
 - Fetches the root zone from https://www.internic.net/domain/root.zone every 2 hours
 - Fetches the DNSSEC trust anchors (root anchors) from https://data.iana.org/root-anchors/root-anchors.xml at the same interval
+- Fetches the IANA TLD list (https://data.iana.org/TLD/tlds-alpha-by-domain.txt) at the same interval
 - Detects differences from the previous snapshot
-- Categorizes changes (delegation / DNSSEC / glue / signature / zone / other)
+- Categorizes changes (delegation / DNSSEC / glue / signature / zone / TLD / other)
 - Summarizes substantive changes (excluding re-signing noise) and notifies via Slack Webhook
 - Posts the same summary to X (Twitter) API v2, split into chunks of 280 characters
 - Posts the same summary to BlueSky via AT Protocol, split into 300-character posts
-- Browses diff history through a Web UI (built with Cloudflare [kumo](https://github.com/cloudflare/kumo)), separated into Root Zone and Root Anchors tabs. The header carries a dark / light switch and a link to the GitHub repository
+- Browses diff history through a Web UI (built with Cloudflare [kumo](https://github.com/cloudflare/kumo)), separated into Root Zone, Root Anchors, and TLDs tabs. The header carries a dark / light switch and a link to the GitHub repository
 
 ## Live
 
@@ -36,6 +37,8 @@ Create a `config.yaml` file:
 zone_url: "https://www.internic.net/domain/root.zone"
 # Source of the DNSSEC trust anchors (root anchors). Leave empty to disable root anchors monitoring (defaults to IANA)
 anchor_url: "https://data.iana.org/root-anchors/root-anchors.xml"
+# Source of the IANA TLD list. Leave empty to disable TLD list monitoring (defaults to IANA)
+tld_url: "https://data.iana.org/TLD/tlds-alpha-by-domain.txt"
 fetch_interval: "2h"
 data_dir: "/var/lib/dns-root-diff"
 slack:
@@ -64,6 +67,7 @@ Overridable via environment variables:
 
 - `DNS_ROOT_DIFF_ZONE_URL`
 - `DNS_ROOT_DIFF_ANCHOR_URL`
+- `DNS_ROOT_DIFF_TLD_URL`
 - `DNS_ROOT_DIFF_INTERVAL`
 - `DNS_ROOT_DIFF_DATA_DIR`
 - `SLACK_WEBHOOK_URL`
@@ -90,6 +94,7 @@ Detected changes are categorized by RR type.
 | `glue` | A, AAAA |
 | `signature` | RRSIG |
 | `zone` | SOA, ZONEMD |
+| `TLD` | TLD (pseudo RR type used by TLD list monitoring) |
 | `other` | anything else |
 
 The root zone is re-signed every 12 hours, at which point about 2,800 RRSIG records are replaced and the SOA serial and ZONEMD serial/digest are also updated. Runs that consist **only** of this **mechanical change** (over 5,000 diffs) are **not notified to Slack/X**. The full history is retained in the Web UI.
@@ -116,7 +121,7 @@ The key tag is not included in the pairing fields. A ZSK rollover changes the ke
 
 When a run has substantive changes, it is notified in the following format. X splits at 280 characters and Slack at 3,500 characters; when more than one message is needed, a `(1/3)`-style number is added to the title line.
 
-The title line names the SOA serials the delta is between, so which serial-to-serial change a message reports is clear from the first line alone (the serial transition is not repeated in the body). When the diff contains no SOA change (such as a root anchors notification), the title falls back to `DNS Root Zone changes` / `DNS Root Anchors changes`.
+The title line names the SOA serials the delta is between, so which serial-to-serial change a message reports is clear from the first line alone (the serial transition is not repeated in the body). When the diff contains no SOA change (such as a root anchors or TLD list notification), the title falls back to `DNS Root Zone changes` / `DNS Root Anchors changes` / `DNS TLD List changes`.
 
 ```
 2026072501 -> 2026072502 changes (1/2)
@@ -172,6 +177,25 @@ DNSSEC 2
     -> 19036 8 2 49AAC11D7B6F6446702E54A1607371607A1A41855200FD2CE1CDDE32F24E8FB5 2019-01-11
 ```
 
+## TLD List Monitoring
+
+Like the root zone and root anchors, the IANA TLD list (https://data.iana.org/TLD/tlds-alpha-by-domain.txt) is fetched at the same interval (`fetch_interval`) and compared against the previous snapshot.
+
+- The numeric version from the `# Version ...` header line is used as the history entry's serial. A run where only the version advances (the TLD set is unchanged) produces no diff
+- Each TLD is treated as one record of the pseudo RR type `TLD`, so **TLD additions** (`+`) and **removals** (`-`) are detected. Labels are normalized to lowercase so case-only differences are ignored
+- The first run only saves a baseline snapshot; no notification or history is recorded
+- Diff history is stored separately from the zone and root anchors in `data_dir/tld-diffs/` and is browsable in the TLDs tab of the Web UI
+- Notifications use the title `DNS TLD List changes`
+
+```text
+DNS TLD List changes
+TLD 2
+
+[TLD]
+  + newgtld. TLD
+  - oldgtld. TLD
+```
+
 ## Usage
 
 ```bash
@@ -185,13 +209,15 @@ make build
 
 ## Web UI
 
-Setting `web.enabled: true` starts a web server that lets you browse diff history in scheduled mode (`-once` does not start it). History is saved as JSON on each detection (zone in `data_dir/diffs/`, root anchors in `data_dir/anchor-diffs/`).
+Setting `web.enabled: true` starts a web server that lets you browse diff history in scheduled mode (`-once` does not start it). History is saved as JSON on each detection (zone in `data_dir/diffs/`, root anchors in `data_dir/anchor-diffs/`, TLD list in `data_dir/tld-diffs/`).
 
-- `GET /` : list and detail views (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo)), switchable via the Root Zone / Root Anchors tabs. The header's moon / sun switch toggles dark / light (the choice is stored in localStorage and follows the OS setting until one is made), and "View on GitHub" links to the repository. Category tabs are deep-linkable through the URL fragment, so `/diffs/<id>#DNSSEC` opens the DNSSEC filter directly. On narrow screens the diff tables scroll horizontally instead of clipping columns
+- `GET /` : list and detail views (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo)), switchable via the Root Zone / Root Anchors / TLDs tabs. The header's moon / sun switch toggles dark / light (the choice is stored in localStorage and follows the OS setting until one is made), and "View on GitHub" links to the repository. Category tabs are deep-linkable through the URL fragment, so `/diffs/<id>#DNSSEC` opens the DNSSEC filter directly. On narrow screens the diff tables scroll horizontally instead of clipping columns
 - `GET /api/diffs?page=1&per_page=20` : root zone diff history list
 - `GET /api/diffs/{id}` : root zone diff detail. Optional query params: `category=<name>` filters changes by category, and `page` / `per_page` (default 100, max 100) paginate them — when paging params are present the response also carries `changes_total` and `total_pages`. DNSKEY / CDNSKEY changes also carry `old_key` / `new_key` (`tag` / `role` / `size`), which the UI renders with the same annotation as the notifications
 - `GET /api/anchors/diffs?page=1&per_page=20` : root anchors diff history list
 - `GET /api/anchors/diffs/{id}` : root anchors diff detail (same optional params as above)
+- `GET /api/tlds/diffs?page=1&per_page=20` : TLD list diff history list
+- `GET /api/tlds/diffs/{id}` : TLD list diff detail (same optional params as above)
 - `GET /api/health` : health check
 
 List and detail responses carry `ETag` headers; requests with a matching `If-None-Match` are answered with `304 Not Modified`.
@@ -216,8 +242,8 @@ Instrumented spans:
 | Span | Description |
 |---|---|
 | `GET /api/diffs`, ... | Web UI / API requests (low-cardinality route names such as `GET /api/diffs/{id}`) |
-| `run` / `zone.run` / `anchor.run` | One scheduled run (also `-once`), with `zone.records` / `zone.changes` / `anchor.digests` attributes |
-| `HTTP GET` | Root zone / root anchors fetches (child spans of `zone.run` / `anchor.run`; trace context is propagated via HTTP headers) |
+| `run` / `zone.run` / `anchor.run` / `tld.run` | One scheduled run (also `-once`), with `zone.records` / `zone.changes` / `anchor.digests` / `tld.count` / `tld.changes` attributes |
+| `HTTP GET` | Root zone / root anchors / TLD list fetches (child spans of `zone.run` / `anchor.run` / `tld.run`; trace context is propagated via HTTP headers) |
 
 Enable it with environment variables:
 

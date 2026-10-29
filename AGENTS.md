@@ -24,17 +24,18 @@ https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2
 
 ## アーキテクチャ
 
-- `cmd/dns-root-diff/main.go`: エントリーポイント、定期実行ループ (zone + root anchors の2系統)
-- `internal/fetcher`: HTTP で root zone / root anchors 取得
+- `cmd/dns-root-diff/main.go`: エントリーポイント、定期実行ループ (zone + root anchors + TLD リストの3系統)
+- `internal/fetcher`: HTTP で root zone / root anchors / TLD リスト取得
 - `internal/zone`: zone ファイルパーサー
 - `internal/anchor`: root anchors (https://data.iana.org/root-anchors/root-anchors.xml) XML パーサー。各 KeyDigest を擬似 DS レコード (Name=キーID, RData=keytag alg digesttype digest [退役日]) に写像し、既存 diff エンジンで差分検出する
-- `internal/diff`: 新旧レコード差分検出 + カテゴリ分類
+- `internal/tld`: IANA TLD リスト (https://data.iana.org/TLD/tlds-alpha-by-domain.txt) パーサー。各行を擬似 TLD レコード (Name=<tld>., Type=TLD) に写像し、既存 diff エンジンで追加・削除を検出する。Version ヘッダを serial 相当として使う
+- `internal/diff`: 新旧レコード差分検出 + カテゴリ分類 (TLD 擬似 type を含む)
 - `internal/dnssec`: DNSKEY RDATA の表示用情報 (key tag = RFC 4034 Appendix B、ロール = SEP ビット、鍵長 = RFC 3110 / ECDSA / EdDSA) の算出。通知 (`internal/notify`) と履歴 (`internal/store` 経由で Web API) の双方が使う
-- `internal/store`: ローカルディスクへのスナップショット保存 (root.zone / root-anchors.xml) + diff 履歴の JSON 永続化 (`data_dir/diffs/` = zone、`data_dir/anchor-diffs/` = root anchors)
-- `internal/notify`: Notifier インターフェース (Notify=zone / NotifyAnchors=root anchors)、Slack Webhook、X API v2 (OAuth 2.0 ユーザートークン)、BlueSky (AT Protocol)
-- `internal/config`: YAML 設定 + 環境変数オーバーライド (`anchor_url` は空なら root anchors 監視無効)
-- `internal/web`: diff 履歴閲覧の HTTP API (`/api/diffs` = zone、`/api/anchors/diffs` = root anchors) + 静的配信 (フロントエンドを go:embed)
-- `web/frontend/`: Web UI (Vite + React + @cloudflare/kumo)。Root Zone / Root Anchors のタブで履歴を分離表示。ビルド成果物は `internal/web/static/` にコミットする
+- `internal/store`: ローカルディスクへのスナップショット保存 (root.zone / root-anchors.xml / tlds-alpha-by-domain.txt) + diff 履歴の JSON 永続化 (`data_dir/diffs/` = zone、`data_dir/anchor-diffs/` = root anchors、`data_dir/tld-diffs/` = TLD リスト)
+- `internal/notify`: Notifier インターフェース (Notify=zone / NotifyAnchors=root anchors / NotifyTLDs=TLD リスト)、Slack Webhook、X API v2 (OAuth 2.0 ユーザートークン)、BlueSky (AT Protocol)
+- `internal/config`: YAML 設定 + 環境変数オーバーライド (`anchor_url` / `tld_url` は空なら該当監視を無効化)
+- `internal/web`: diff 履歴閲覧の HTTP API (`/api/diffs` = zone、`/api/anchors/diffs` = root anchors、`/api/tlds/diffs` = TLD リスト) + 静的配信 (フロントエンドを go:embed)
+- `web/frontend/`: Web UI (Vite + React + @cloudflare/kumo)。Root Zone / Root Anchors / TLDs のタブで履歴を分離表示。ビルド成果物は `internal/web/static/` にコミットする
 - `deploy/`: systemd unit、デプロイシェル、nginx リバースプロキシ設定例
 
 ## 実行方法

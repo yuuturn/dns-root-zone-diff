@@ -19,6 +19,8 @@ const (
 	changesTitle = "changes"
 	// anchorPostTitle は root anchors 変更投稿のタイトル。
 	anchorPostTitle = "DNS Root Anchors changes"
+	// tldPostTitle は TLD リスト変更投稿のタイトル。
+	tldPostTitle = "DNS TLD List changes"
 	// anchorRDataMaxLen は anchors 投稿で DS ダイジェスト全体 (64文字) と退役日が
 	// 見えるようにする RDATA 上限。
 	anchorRDataMaxLen = 120
@@ -246,6 +248,13 @@ func anchorFormatOptions(base FormatOptions) FormatOptions {
 	return base
 }
 
+// tldFormatOptions は TLD リスト通知共通のフォーマットオプション。
+// TLD の擬似レコードはレコードデータを持たないため、タイトルだけ差し替える。
+func tldFormatOptions(base FormatOptions) FormatOptions {
+	base.Title = tldPostTitle
+	return base
+}
+
 // overviewBlock は先頭パーツに置く概要ブロックを組み立てる。
 // カテゴリ件数と、通知から省いた再署名ノイズの規模を載せる。
 //
@@ -364,9 +373,10 @@ func formatChangeWith(c diff.Change, rdataMaxLen int) string {
 
 	switch c.Kind {
 	case diff.ChangeAdded:
-		return fmt.Sprintf("  + %s %s %s", c.Name, c.Type, newRData)
+		// TLD 擬似レコードは RDATA を持たないため、末尾の余分な空白を落とす。
+		return strings.TrimRight(fmt.Sprintf("  + %s %s %s", c.Name, c.Type, newRData), " ")
 	case diff.ChangeRemoved:
-		return fmt.Sprintf("  - %s %s %s", c.Name, c.Type, oldRData)
+		return strings.TrimRight(fmt.Sprintf("  - %s %s %s", c.Name, c.Type, oldRData), " ")
 	case diff.ChangeModified:
 		ttl := ""
 		if c.OldTTL != c.NewTTL {

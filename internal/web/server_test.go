@@ -64,11 +64,20 @@ func testStatic() fs.FS {
 }
 
 func newTestServer(entries []store.Entry) *httptest.Server {
-	return newTestServerWithAnchors(entries, nil)
+	return newTestServerWithAll(entries, nil, nil)
 }
 
 func newTestServerWithAnchors(entries, anchorEntries []store.Entry) *httptest.Server {
-	s := New(&mockHistory{entries: entries}, &mockHistory{entries: anchorEntries}, testStatic())
+	return newTestServerWithAll(entries, anchorEntries, nil)
+}
+
+func newTestServerWithAll(entries, anchorEntries, tldEntries []store.Entry) *httptest.Server {
+	s := New(
+		&mockHistory{entries: entries},
+		&mockHistory{entries: anchorEntries},
+		&mockHistory{entries: tldEntries},
+		testStatic(),
+	)
 	return httptest.NewServer(s.Handler())
 }
 
@@ -548,6 +557,70 @@ func TestAnchorAndZoneListsAreSeparate(t *testing.T) {
 	anchorBody := getJSON(t, srv.URL+"/api/anchors/diffs", http.StatusOK)
 	if anchorBody["total"].(float64) != 1 {
 		t.Errorf("anchor total = %v, want 1", anchorBody["total"])
+	}
+}
+
+func TestListTLDDiffs(t *testing.T) {
+	entries := testEntries(2)
+	srv := newTestServerWithAll(nil, nil, entries)
+	defer srv.Close()
+
+	body := getJSON(t, srv.URL+"/api/tlds/diffs", http.StatusOK)
+	if body["total"].(float64) != 2 {
+		t.Errorf("total = %v, want 2", body["total"])
+	}
+	diffs := body["diffs"].([]any)
+	if len(diffs) != 2 {
+		t.Fatalf("len(diffs) = %d, want 2", len(diffs))
+	}
+	if _, ok := diffs[0].(map[string]any)["changes"]; ok {
+		t.Error("TLD list response should not include changes")
+	}
+}
+
+func TestGetTLDDiff(t *testing.T) {
+	entries := testEntries(1)
+	srv := newTestServerWithAll(nil, nil, entries)
+	defer srv.Close()
+
+	body := getJSON(t, srv.URL+"/api/tlds/diffs/"+entries[0].ID, http.StatusOK)
+	if body["id"] != entries[0].ID {
+		t.Errorf("id = %v", body["id"])
+	}
+	if _, ok := body["changes"]; !ok {
+		t.Error("detail response should include changes")
+	}
+}
+
+func TestGetTLDDiffNotFound(t *testing.T) {
+	srv := newTestServerWithAll(nil, nil, nil)
+	defer srv.Close()
+
+	getJSON(t, srv.URL+"/api/tlds/diffs/no-such-id", http.StatusNotFound)
+}
+
+func TestGetTLDDiffInvalidID(t *testing.T) {
+	srv := newTestServerWithAll(nil, nil, nil)
+	defer srv.Close()
+
+	getJSON(t, srv.URL+"/api/tlds/diffs/invalid%20id", http.StatusBadRequest)
+}
+
+func TestTLDAndOtherListsAreSeparate(t *testing.T) {
+	zoneEntries := testEntries(3)
+	anchorEntries := testEntries(2)
+	tldEntries := testEntries(1)
+	srv := newTestServerWithAll(zoneEntries, anchorEntries, tldEntries)
+	defer srv.Close()
+
+	if body := getJSON(t, srv.URL+"/api/diffs", http.StatusOK); body["total"].(float64) != 3 {
+		t.Errorf("zone total = %v, want 3", body["total"])
+	}
+	if body := getJSON(t, srv.URL+"/api/anchors/diffs", http.StatusOK); body["total"].(float64) != 2 {
+		t.Errorf("anchor total = %v, want 2", body["total"])
+	}
+	if body := getJSON(t, srv.URL+"/api/tlds/diffs", http.StatusOK); body["total"].(float64) != 1 {
+		t.Errorf("TLD total = %v, want 1", body["total"])
 	}
 }
 

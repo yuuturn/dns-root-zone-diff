@@ -8,12 +8,13 @@ DNS root zone の変更を機械的に検知して通知するツール。
 
 - https://www.internic.net/domain/root.zone から 2時間に一度ゾーン取得
 - DNSSEC トラストアンカー (root anchors) を https://data.iana.org/root-anchors/root-anchors.xml から同じ間隔で取得
+- IANA の TLD リスト (https://data.iana.org/TLD/tlds-alpha-by-domain.txt) を同じ間隔で取得
 - 前回との差分を検出
-- 変更をカテゴリ別に整理（delegation / DNSSEC / glue / signature / zone / other）
+- 変更をカテゴリ別に整理（delegation / DNSSEC / glue / signature / zone / TLD / other）
 - 再署名ノイズを除いた実質的な変更をサマリーにして Slack Webhook へ通知
 - 同じサマリーを X (Twitter) API v2 へ 280文字ごとに分割して連投
 - 同じサマリーを BlueSky (AT Protocol) へ 300文字ごとに分割して投稿
-- diff 履歴を Web UI で閲覧 (Cloudflare [kumo](https://github.com/cloudflare/kumo) 製、Root Zone / Root Anchors のタブで分離)。ヘッダーに dark / light 切替スイッチと GitHub リポジトリへのリンク
+- diff 履歴を Web UI で閲覧 (Cloudflare [kumo](https://github.com/cloudflare/kumo) 製、Root Zone / Root Anchors / TLDs のタブで分離)。ヘッダーに dark / light 切替スイッチと GitHub リポジトリへのリンク
 
 ## 運用中
 
@@ -36,6 +37,8 @@ pre-commit install
 zone_url: "https://www.internic.net/domain/root.zone"
 # root anchors (DNSSEC トラストアンカー) の取得元。空にすると root anchors 監視を無効化 (省略時は IANA)
 anchor_url: "https://data.iana.org/root-anchors/root-anchors.xml"
+# IANA の TLD リストの取得元。空にすると TLD リスト監視を無効化 (省略時は IANA)
+tld_url: "https://data.iana.org/TLD/tlds-alpha-by-domain.txt"
 fetch_interval: "2h"
 data_dir: "/var/lib/dns-root-diff"
 slack:
@@ -64,6 +67,7 @@ bluesky:
 
 - `DNS_ROOT_DIFF_ZONE_URL`
 - `DNS_ROOT_DIFF_ANCHOR_URL`
+- `DNS_ROOT_DIFF_TLD_URL`
 - `DNS_ROOT_DIFF_INTERVAL`
 - `DNS_ROOT_DIFF_DATA_DIR`
 - `SLACK_WEBHOOK_URL`
@@ -90,6 +94,7 @@ bluesky:
 | `glue` | A, AAAA |
 | `signature` | RRSIG |
 | `zone` | SOA, ZONEMD |
+| `TLD` | TLD (TLD リスト監視の擬似 RR type) |
 | `other` | 上記以外 |
 
 root zone は12時間ごとに再署名され、その際 RRSIG 約2,800レコードが入れ替わって
@@ -129,8 +134,8 @@ key tag は組を作るフィールドに含めない。ZSK ロールオーバ�
 
 タイトル行には「どのシリアル値からどのシリアル値への差分か」を載せるため、1通目だけで
 どの回の差分かが分かる (同じ遷移を本文の serial 行で繰り返さない)。差分に SOA の変更が
-含まれない場合 (root anchors 通知など) は `DNS Root Zone changes` /
-`DNS Root Anchors changes` にフォールバックする。
+含まれない場合 (root anchors / TLD リスト通知など) は `DNS Root Zone changes` /
+`DNS Root Anchors changes` / `DNS TLD List changes` にフォールバックする。
 
 ```
 2026072501 -> 2026072502 changes (1/2)
@@ -203,6 +208,30 @@ DNSSEC 2
     -> 19036 8 2 49AAC11D7B6F6446702E54A1607371607A1A41855200FD2CE1CDDE32F24E8FB5 2019-01-11
 ```
 
+## TLD リストの監視
+
+root zone / root anchors と同様に、IANA の TLD リスト
+(https://data.iana.org/TLD/tlds-alpha-by-domain.txt) を同じ間隔 (`fetch_interval`)
+で取得し、前回スナップショットとの差分を検出する。
+
+- ファイル先頭の `# Version ...` 行からバージョン番号を取得し、履歴の serial 相当
+  として使う。バージョンだけが進み TLD 集合が同じ回は差分なしとして扱う
+- 各 TLD は擬似 RR type `TLD` の1レコードとして扱い、**TLD の追加** (`+`)・
+  **削除** (`-`) を検出する。大文字小文字は区別せず小文字に正規化する
+- 初回実行はベースラインとしてスナップショット保存のみ行い、通知・履歴記録はしない
+- 差分履歴は zone / root anchors とは別に `data_dir/tld-diffs/` へ保存され、
+  Web UI の TLDs タブで閲覧できる
+- 通知タイトルは `DNS TLD List changes`
+
+```text
+DNS TLD List changes
+TLD 2
+
+[TLD]
+  + newgtld. TLD
+  - oldgtld. TLD
+```
+
 ## 実行
 
 ```bash
@@ -218,13 +247,16 @@ make build
 
 `web.enabled: true` にすると定期実行モード時に diff 履歴を閲覧できる Web サーバーが起動する
 (`-once` では起動しない)。履歴は変更検知のたびに JSON として保存される
-(zone は `data_dir/diffs/`、root anchors は `data_dir/anchor-diffs/`)。
+(zone は `data_dir/diffs/`、root anchors は `data_dir/anchor-diffs/`、TLD リストは
+`data_dir/tld-diffs/`)。
 
-- `GET /` : 一覧・詳細画面 (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))。Root Zone / Root Anchors のタブで切り替え。ヘッダーの月/太陽スイッチで dark / light を切り替えられ、選択は localStorage に保存される (未選択時は OS の設定に追従)。ヘッダーの "View on GitHub" はリポジトリへのリンク。カテゴリタブは URL のフラグメントでパーマリンク化されており、`/diffs/<id>#DNSSEC` で DNSSEC の絞り込みを直接開ける。狭い画面では diff テーブルを横スクロールして列の切れを防ぐ
+- `GET /` : 一覧・詳細画面 (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))。Root Zone / Root Anchors / TLDs のタブで切り替え。ヘッダーの月/太陽スイッチで dark / light を切り替えられ、選択は localStorage に保存される (未選択時は OS の設定に追従)。ヘッダーの "View on GitHub" はリポジトリへのリンク。カテゴリタブは URL のフラグメントでパーマリンク化されており、`/diffs/<id>#DNSSEC` で DNSSEC の絞り込みを直接開ける。狭い画面では diff テーブルを横スクロールして列の切れを防ぐ
 - `GET /api/diffs?page=1&per_page=20` : root zone の diff 履歴一覧
 - `GET /api/diffs/{id}` : root zone の diff 詳細。オプションで `category=<名前>` でカテゴリ絞り込み、`page` / `per_page` (既定 100、上限 100) で changes をページングできる。ページング時は応答に `changes_total` / `total_pages` が追加される。DNSKEY / CDNSKEY の変更には `old_key` / `new_key` (`tag` / `role` / `size`) が付き、画面では通知と同じ注記として表示される
 - `GET /api/anchors/diffs?page=1&per_page=20` : root anchors の diff 履歴一覧
 - `GET /api/anchors/diffs/{id}` : root anchors の diff 詳細 (上記と同じオプション付き)
+- `GET /api/tlds/diffs?page=1&per_page=20` : TLD リストの diff 履歴一覧
+- `GET /api/tlds/diffs/{id}` : TLD リストの diff 詳細 (上記と同じオプション付き)
 - `GET /api/health` : 死活監視
 
 一覧・詳細 API は `ETag` を返し、一致する `If-None-Match` 付きリクエストには `304 Not Modified` で応答する。
@@ -251,8 +283,8 @@ OpenTelemetry (OTLP) でトレースを送信できる。**既定では無効**�
 | スパン | 内容 |
 |---|---|
 | `GET /api/diffs` など | Web UI / API のリクエスト (`GET /api/diffs/{id}` のようにルート単位の低カーディナリティ名) |
-| `run` / `zone.run` / `anchor.run` | 定期実行 (および `-once`) の 1 回分。`zone.records` / `zone.changes` / `anchor.digests` 属性付き |
-| `HTTP GET` | root zone / root anchors の取得 (`zone.run` / `anchor.run` の子スパン。トレースコンテキストは HTTP ヘッダーで伝播) |
+| `run` / `zone.run` / `anchor.run` / `tld.run` | 定期実行 (および `-once`) の 1 回分。`zone.records` / `zone.changes` / `anchor.digests` / `tld.count` / `tld.changes` 属性付き |
+| `HTTP GET` | root zone / root anchors / TLD リストの取得 (`zone.run` / `anchor.run` / `tld.run` の子スパン。トレースコンテキストは HTTP ヘッダーで伝播) |
 
 有効化は環境変数で行う:
 

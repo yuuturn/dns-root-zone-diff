@@ -494,6 +494,131 @@ func TestRunOnceSkipsAnchorsWhenDisabled(t *testing.T) {
 	}
 }
 
+// tldList はテスト用の TLD リストフィクスチャを組み立てる。
+func tldList(version string, labels ...string) string {
+	return "# Version " + version + ", Last Updated now\n" + strings.Join(labels, "\n") + "\n"
+}
+
+func TestRunOnceTLDBaseline(t *testing.T) {
+	zoneSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(".\t86400\tIN\tNS\ta.root-servers.net.\n"))
+	}))
+	defer zoneSrv.Close()
+	tldData := tldList("2026102900", "COM", "NET")
+	tldSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(tldData))
+	}))
+	defer tldSrv.Close()
+
+	dir := t.TempDir()
+	cfg := config.Config{
+		ZoneURL: zoneSrv.URL,
+		TLDURL:  tldSrv.URL,
+		DataDir: dir,
+	}
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatalf("runOnce() error = %v", err)
+	}
+	s := store.NewTLD(dir)
+	if !s.Exists() {
+		t.Error("TLD snapshot should exist after initial run")
+	}
+	if data, err := s.Load(); err != nil || string(data) != tldData {
+		t.Errorf("TLD snapshot = %q, %v", data, err)
+	}
+	if entries, _ := store.NewTLDHistory(dir).List(); len(entries) != 0 {
+		t.Errorf("TLD history after baseline = %d, want 0", len(entries))
+	}
+}
+
+func TestRunOnceTLDDetectsAndNotifies(t *testing.T) {
+	zoneSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(".\t86400\tIN\tNS\ta.root-servers.net.\n"))
+	}))
+	defer zoneSrv.Close()
+
+	var tldRequests int
+	oldList := tldList("2026102800", "COM", "NET")
+	newList := tldList("2026102900", "COM", "NET", "NEW")
+	tldSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tldRequests++
+		if tldRequests == 1 {
+			_, _ = w.Write([]byte(oldList))
+			return
+		}
+		_, _ = w.Write([]byte(newList))
+	}))
+	defer tldSrv.Close()
+
+	var mu sync.Mutex
+	var texts []string
+	slack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]string
+		_ = json.Unmarshal(body, &payload)
+		mu.Lock()
+		texts = append(texts, payload["text"])
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer slack.Close()
+
+	dir := t.TempDir()
+	cfg := config.Config{
+		ZoneURL: zoneSrv.URL,
+		TLDURL:  tldSrv.URL,
+		DataDir: dir,
+		Slack:   config.SlackConfig{Enabled: true, WebhookURL: slack.URL},
+	}
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatalf("first runOnce() error = %v", err)
+	}
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatalf("second runOnce() error = %v", err)
+	}
+
+	mu.Lock()
+	got := append([]string(nil), texts...)
+	mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("notifications = %d, want 1 (only the TLD change): %v", len(got), got)
+	}
+	if !strings.HasPrefix(got[0], "DNS TLD List changes") {
+		t.Errorf("notification title = %q", got[0])
+	}
+	if !strings.Contains(got[0], "+ new. TLD") {
+		t.Errorf("notification should mention the added TLD:\n%s", got[0])
+	}
+
+	entries, err := store.NewTLDHistory(dir).List()
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("TLD history = %d, %v; want 1", len(entries), err)
+	}
+	if entries[0].OldSerial != "2026102800" || entries[0].NewSerial != "2026102900" {
+		t.Errorf("serials = %q -> %q", entries[0].OldSerial, entries[0].NewSerial)
+	}
+	if entries[0].Summary.Total != 1 || entries[0].Summary.Added != 1 {
+		t.Errorf("summary = %+v", entries[0].Summary)
+	}
+	if entries[0].Summary.ByCategory["TLD"] != 1 {
+		t.Errorf("ByCategory = %+v, want TLD:1", entries[0].Summary.ByCategory)
+	}
+}
+
+func TestRunOnceSkipsTLDWhenDisabled(t *testing.T) {
+	zoneSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(".\t86400\tIN\tNS\ta.root-servers.net.\n"))
+	}))
+	defer zoneSrv.Close()
+	cfg := config.Config{ZoneURL: zoneSrv.URL, DataDir: t.TempDir()}
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatalf("runOnce() error = %v", err)
+	}
+	if store.NewTLD(cfg.DataDir).Exists() {
+		t.Error("TLD snapshot must not be created when TLDURL is empty")
+	}
+}
+
 func TestHTTPSpanName(t *testing.T) {
 	tests := []struct {
 		name    string

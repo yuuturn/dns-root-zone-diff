@@ -20,6 +20,8 @@ const historyDirName = "diffs"
 
 const anchorHistoryDirName = "anchor-diffs"
 
+const tldHistoryDirName = "tld-diffs"
+
 const indexFileName = ".index.json"
 
 // ErrInvalidID は履歴エントリの ID が不正な場合に返される。
@@ -122,17 +124,26 @@ func NewEntry(detectedAt time.Time, oldSerial, newSerial string, changes []diff.
 			NewRData: c.NewRData,
 		}
 		// レコードが存在する側の TTL のみ記録する (added に旧側はない、等)。
+		// TLD リストの擬似レコードは TTL を持たないため、Web UI に "TTL 0" が
+		// 出ないよう両側とも省く。
 		oldTTL, newTTL := c.OldTTL, c.NewTTL
+		withTTL := c.Type != diff.TypeTLD
 		switch c.Kind {
 		case diff.ChangeAdded:
-			cj.NewTTL = &newTTL
+			if withTTL {
+				cj.NewTTL = &newTTL
+			}
 			cj.NewKey = keyJSON(c.Type, c.NewRData)
 		case diff.ChangeRemoved:
-			cj.OldTTL = &oldTTL
+			if withTTL {
+				cj.OldTTL = &oldTTL
+			}
 			cj.OldKey = keyJSON(c.Type, c.OldRData)
 		case diff.ChangeModified:
-			cj.OldTTL = &oldTTL
-			cj.NewTTL = &newTTL
+			if withTTL {
+				cj.OldTTL = &oldTTL
+				cj.NewTTL = &newTTL
+			}
 			cj.OldKey = keyJSON(c.Type, c.OldRData)
 			cj.NewKey = keyJSON(c.Type, c.NewRData)
 		}
@@ -172,6 +183,12 @@ func NewHistory(dataDir string) *History {
 // root anchors の差分履歴は zone の差分履歴 (diffs/) とは別に保存する。
 func NewAnchorHistory(dataDir string) *History {
 	return &History{dir: filepath.Join(dataDir, anchorHistoryDirName)}
+}
+
+// NewTLDHistory は dataDir 配下の tld-diffs ディレクトリを使う History を生成する。
+// TLD リストの差分履歴は zone / root anchors の差分履歴とは別に保存する。
+func NewTLDHistory(dataDir string) *History {
+	return &History{dir: filepath.Join(dataDir, tldHistoryDirName)}
 }
 
 // Append はエントリを新しいファイルとして保存する。

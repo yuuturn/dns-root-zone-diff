@@ -41,29 +41,36 @@ func (s *SlackNotifier) Name() string {
 // Notify は Slack Webhook にメッセージを送信する。
 // 実質的な変更がない (再署名のみの) 場合は何も送信しない。
 func (s *SlackNotifier) Notify(ctx context.Context, changes []diff.Change) error {
-	msgs := FormatPosts(changes, FormatOptions{
+	return s.notify(ctx, FormatPosts(changes, FormatOptions{
 		MaxLen:    slackMaxLen,
 		MaxParts:  slackMaxParts,
 		Numbering: true,
-	})
-	for i, msg := range msgs {
-		if err := s.post(ctx, msg); err != nil {
-			return fmt.Errorf("slack message %d/%d: %w", i+1, len(msgs), err)
-		}
-	}
-	return nil
+	}), "slack message")
 }
 
 // NotifyAnchors は root anchors の変更を Slack に通知する。
 func (s *SlackNotifier) NotifyAnchors(ctx context.Context, changes []diff.Change) error {
-	msgs := FormatPosts(changes, anchorFormatOptions(FormatOptions{
+	return s.notify(ctx, FormatPosts(changes, anchorFormatOptions(FormatOptions{
 		MaxLen:    slackMaxLen,
 		MaxParts:  slackMaxParts,
 		Numbering: true,
-	}))
+	})), "slack anchor message")
+}
+
+// NotifyTLDs は TLD リストの変更を Slack に通知する。
+func (s *SlackNotifier) NotifyTLDs(ctx context.Context, changes []diff.Change) error {
+	return s.notify(ctx, FormatPosts(changes, tldFormatOptions(FormatOptions{
+		MaxLen:    slackMaxLen,
+		MaxParts:  slackMaxParts,
+		Numbering: true,
+	})), "slack TLD message")
+}
+
+// notify は msgs を順に投稿する。prefix はエラーメッセージの識別子。
+func (s *SlackNotifier) notify(ctx context.Context, msgs []string, prefix string) error {
 	for i, msg := range msgs {
 		if err := s.post(ctx, msg); err != nil {
-			return fmt.Errorf("slack anchor message %d/%d: %w", i+1, len(msgs), err)
+			return fmt.Errorf("%s %d/%d: %w", prefix, i+1, len(msgs), err)
 		}
 	}
 	return nil
