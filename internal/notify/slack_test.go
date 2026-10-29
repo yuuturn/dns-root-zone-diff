@@ -222,7 +222,7 @@ func TestSlackNotifyTLDs(t *testing.T) {
 	n := NewSlackNotifier(srv.URL)
 	err := n.NotifyTLDs(context.Background(), []diff.Change{
 		{Kind: diff.ChangeAdded, Name: "newgtld.", Type: diff.TypeTLD},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

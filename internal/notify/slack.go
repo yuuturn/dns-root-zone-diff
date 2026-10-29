@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yfujii/dns-root-diff/internal/diff"
+	"github.com/yfujii/dns-root-diff/internal/whois"
 )
 
 const (
@@ -58,7 +59,8 @@ func (s *SlackNotifier) NotifyAnchors(ctx context.Context, changes []diff.Change
 }
 
 // NotifyTLDs は TLD リストの変更を Slack に通知する。
-func (s *SlackNotifier) NotifyTLDs(ctx context.Context, changes []diff.Change) error {
+// WHOIS 情報は X / BlueSky のリプライ用で、Slack では使わない。
+func (s *SlackNotifier) NotifyTLDs(ctx context.Context, changes []diff.Change, _ map[string]whois.Info) error {
 	return s.notify(ctx, FormatPosts(changes, tldFormatOptions(FormatOptions{
 		MaxLen:    slackMaxLen,
 		MaxParts:  slackMaxParts,

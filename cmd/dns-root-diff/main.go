@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/yfujii/dns-root-diff/internal/telemetry"
 	"github.com/yfujii/dns-root-diff/internal/tld"
 	"github.com/yfujii/dns-root-diff/internal/web"
+	"github.com/yfujii/dns-root-diff/internal/whois"
 	"github.com/yfujii/dns-root-diff/internal/zone"
 )
 
@@ -398,8 +400,14 @@ func runTLDOnce(ctx context.Context, cfg config.Config, configPath string) error
 		} else if hadPrevious {
 			fmt.Printf("%d substantive TLD changes\n", len(substantive))
 			notifiers := buildNotifiers(cfg, configPath)
+			// WHOIS のリプライは X / BlueSky のみ対応している。どちらも
+			// 無効な構成では外部へ問い合わせない。
+			var infos map[string]whois.Info
+			if len(notifiers) > 0 && (cfg.Twitter.Enabled || cfg.Bluesky.Enabled) {
+				infos = lookupTLDWhois(ctx, substantive, whois.Lookup)
+			}
 			for _, n := range notifiers {
-				if err := n.NotifyTLDs(ctx, substantive); err != nil {
+				if err := n.NotifyTLDs(ctx, substantive, infos); err != nil {
 					fmt.Fprintf(os.Stderr, "notify %s (TLDs) failed: %v\n", n.Name(), err)
 				}
 			}
@@ -421,6 +429,28 @@ func runTLDOnce(ctx context.Context, cfg config.Config, configPath string) error
 	}
 
 	return nil
+}
+
+// lookupTLDWhois は TLD の追加・削除について WHOIS 情報を引く。
+// lookup はテストで差し替える。失敗した TLD はリプライを省略する。
+func lookupTLDWhois(ctx context.Context, changes []diff.Change, lookup func(context.Context, string) (whois.Info, error)) map[string]whois.Info {
+	infos := make(map[string]whois.Info)
+	for _, c := range changes {
+		if c.Type != diff.TypeTLD {
+			continue
+		}
+		if c.Kind != diff.ChangeAdded && c.Kind != diff.ChangeRemoved {
+			continue
+		}
+		tld := strings.TrimSuffix(c.Name, ".")
+		info, err := lookup(ctx, tld)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "whois lookup for %s failed: %v\n", tld, err)
+			continue
+		}
+		infos[tld] = info
+	}
+	return infos
 }
 
 // newHTTPHandler は Web サーバのスパン計装 (otelhttp) を追加したハンドラを返す。

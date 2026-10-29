@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -15,7 +16,9 @@ import (
 	"time"
 
 	"github.com/yfujii/dns-root-diff/internal/config"
+	"github.com/yfujii/dns-root-diff/internal/diff"
 	"github.com/yfujii/dns-root-diff/internal/store"
+	"github.com/yfujii/dns-root-diff/internal/whois"
 	"github.com/yfujii/dns-root-diff/internal/zone"
 )
 
@@ -616,6 +619,38 @@ func TestRunOnceSkipsTLDWhenDisabled(t *testing.T) {
 	}
 	if store.NewTLD(cfg.DataDir).Exists() {
 		t.Error("TLD snapshot must not be created when TLDURL is empty")
+	}
+}
+
+func TestLookupTLDWhois(t *testing.T) {
+	var calls []string
+	lookup := func(_ context.Context, tld string) (whois.Info, error) {
+		calls = append(calls, tld)
+		if tld == "former" {
+			return whois.Info{}, errors.New("no WHOIS data")
+		}
+		return whois.Info{Domain: strings.ToUpper(tld), Status: "ACTIVE", Source: "IANA"}, nil
+	}
+
+	changes := []diff.Change{
+		{Kind: diff.ChangeAdded, Name: "new.", Type: diff.TypeTLD},
+		{Kind: diff.ChangeRemoved, Name: "former.", Type: diff.TypeTLD},
+		{Kind: diff.ChangeAdded, Name: "delegation.", Type: "NS", NewRData: "ns1.delegation."},
+		{Kind: diff.ChangeModified, Name: "modified.", Type: diff.TypeTLD},
+	}
+	infos := lookupTLDWhois(context.Background(), changes, lookup)
+
+	if got := strings.Join(calls, ","); got != "new,former" {
+		t.Errorf("lookup calls = %q, want new,former (only added/removed TLDs)", got)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("infos = %+v, want only the successful lookup", infos)
+	}
+	if info, ok := infos["new"]; !ok || info.Domain != "NEW" || info.Status != "ACTIVE" {
+		t.Errorf("infos[new] = %+v, %v", info, ok)
+	}
+	if _, ok := infos["former"]; ok {
+		t.Error("failed lookup must not be included in infos")
 	}
 }
 

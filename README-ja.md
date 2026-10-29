@@ -222,6 +222,10 @@ root zone / root anchors と同様に、IANA の TLD リスト
 - 差分履歴は zone / root anchors とは別に `data_dir/tld-diffs/` へ保存され、
   Web UI の TLDs タブで閲覧できる
 - 通知タイトルは `DNS TLD List changes`
+- X / BlueSky では、通知本体の後に、追加・削除された各 TLD の IANA WHOIS
+  (whois.iana.org) から取得した最小情報をリプライとして投稿する
+  (domain / status / remarks / created / changed / source)。Slack は対象外。
+  WHOIS の取得に失敗した TLD はリプライを省略する
 
 ```text
 DNS TLD List changes
@@ -230,6 +234,19 @@ TLD 2
 [TLD]
   + newgtld. TLD
   - oldgtld. TLD
+```
+
+X / BlueSky のリプライ例:
+
+```text
+% whois helsinki.
+...
+domain:       HELSINKI
+status:       FORMER
+remarks:      Registration information:
+created:      2015-12-10
+changed:      2026-10-28
+source:       IANA
 ```
 
 ## 実行

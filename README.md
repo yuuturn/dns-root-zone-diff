@@ -186,6 +186,7 @@ Like the root zone and root anchors, the IANA TLD list (https://data.iana.org/TL
 - The first run only saves a baseline snapshot; no notification or history is recorded
 - Diff history is stored separately from the zone and root anchors in `data_dir/tld-diffs/` and is browsable in the TLDs tab of the Web UI
 - Notifications use the title `DNS TLD List changes`
+- On X / BlueSky, the notification is followed by a reply containing minimal IANA WHOIS information (`whois.iana.org`) for each added or removed TLD: domain / status / remarks / created / changed / source. Slack does not receive the WHOIS reply, and TLDs whose WHOIS lookup fails are skipped
 
 ```text
 DNS TLD List changes
@@ -194,6 +195,19 @@ TLD 2
 [TLD]
   + newgtld. TLD
   - oldgtld. TLD
+```
+
+Example X / BlueSky reply:
+
+```text
+% whois helsinki.
+...
+domain:       HELSINKI
+status:       FORMER
+remarks:      Registration information:
+created:      2015-12-10
+changed:      2026-10-28
+source:       IANA
 ```
 
 ## Usage
