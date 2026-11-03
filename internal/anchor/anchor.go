@@ -84,6 +84,8 @@ func Parse(data []byte) (TrustAnchors, error) {
 		if kd.DigestType == 0 {
 			return TrustAnchors{}, fmt.Errorf("parse root anchors xml: KeyDigest %s has no DigestType", id)
 		}
+		// KeyTag 0 is not rejected: 0 is a valid key tag value, and the XML
+		// field cannot distinguish "0" from "omitted".
 		kd.ID = id
 		kd.Digest = digest
 		ta.Digests = append(ta.Digests, KeyDigest(kd))

@@ -60,13 +60,15 @@ func TestParseRejectsWrongRootOrEmptyBundle(t *testing.T) {
 	// 200 で返るエラーページや任意の well-formed XML を「空の trust anchor」
 	// として受理すると、全キー削除の誤通知につながるため拒否する。
 	cases := map[string]string{
-		"error xml":         `<Error><Code>AccessDenied</Code></Error>`,
-		"html":              `<html><body>maintenance</body></html>`,
-		"wrong root":        `<TrustAnchorBundle><X/></TrustAnchorBundle>`,
-		"empty trustanchor": `<TrustAnchor id="ABC"/>`,
-		"missing id":        `<TrustAnchor id="ABC"><KeyDigest><KeyTag>1</KeyTag><Algorithm>8</Algorithm><DigestType>2</DigestType><Digest>49AAC11D</Digest></KeyDigest></TrustAnchor>`,
-		"missing digest":    `<TrustAnchor id="ABC"><KeyDigest id="K1"><KeyTag>1</KeyTag><Algorithm>8</Algorithm><DigestType>2</DigestType></KeyDigest></TrustAnchor>`,
-		"invalid hex":       `<TrustAnchor id="ABC"><KeyDigest id="K1"><KeyTag>1</KeyTag><Algorithm>8</Algorithm><DigestType>2</DigestType><Digest>ZZZZ</Digest></KeyDigest></TrustAnchor>`,
+		"error xml":           `<Error><Code>AccessDenied</Code></Error>`,
+		"html":                `<html><body>maintenance</body></html>`,
+		"wrong root":          `<TrustAnchorBundle><X/></TrustAnchorBundle>`,
+		"empty trustanchor":   `<TrustAnchor id="ABC"/>`,
+		"missing id":          `<TrustAnchor id="ABC"><KeyDigest><KeyTag>1</KeyTag><Algorithm>8</Algorithm><DigestType>2</DigestType><Digest>49AAC11D</Digest></KeyDigest></TrustAnchor>`,
+		"missing digest":      `<TrustAnchor id="ABC"><KeyDigest id="K1"><KeyTag>1</KeyTag><Algorithm>8</Algorithm><DigestType>2</DigestType></KeyDigest></TrustAnchor>`,
+		"invalid hex":         `<TrustAnchor id="ABC"><KeyDigest id="K1"><KeyTag>1</KeyTag><Algorithm>8</Algorithm><DigestType>2</DigestType><Digest>ZZZZ</Digest></KeyDigest></TrustAnchor>`,
+		"missing algorithm":   `<TrustAnchor id="ABC"><KeyDigest id="K1"><KeyTag>1</KeyTag><DigestType>2</DigestType><Digest>49AAC11D</Digest></KeyDigest></TrustAnchor>`,
+		"missing digest type": `<TrustAnchor id="ABC"><KeyDigest id="K1"><KeyTag>1</KeyTag><Algorithm>8</Algorithm><Digest>49AAC11D</Digest></KeyDigest></TrustAnchor>`,
 	}
 	for name, input := range cases {
 		t.Run(name, func(t *testing.T) {

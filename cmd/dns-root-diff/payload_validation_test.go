@@ -107,3 +107,116 @@ func TestRunOnceKeepsAnchorBaselineOnInvalidXML(t *testing.T) {
 		t.Errorf("anchor history entries = %d, want 0", len(entries))
 	}
 }
+
+func TestRunOnceRebaselinesOnCorruptZoneSnapshot(t *testing.T) {
+	const goodZone = ".\t86400\tIN\tNS\ta.root-servers.net.\n"
+	zoneSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(goodZone))
+	}))
+	defer zoneSrv.Close()
+
+	dir := t.TempDir()
+	if err := store.New(dir).Save([]byte("\n")); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{ZoneURL: zoneSrv.URL, DataDir: dir}
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatalf("runOnce() error = %v, want automatic re-baseline", err)
+	}
+
+	data, err := store.New(dir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != goodZone {
+		t.Errorf("zone snapshot = %q, want the new baseline", data)
+	}
+	entries, err := store.NewHistory(dir).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("history entries = %d, want 0 after re-baseline", len(entries))
+	}
+}
+
+func TestRunOnceRebaselinesOnCorruptAnchorSnapshot(t *testing.T) {
+	const goodZone = ".\t86400\tIN\tNS\ta.root-servers.net.\n"
+	zoneSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(goodZone))
+	}))
+	defer zoneSrv.Close()
+	anchorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(anchorXML))
+	}))
+	defer anchorSrv.Close()
+
+	dir := t.TempDir()
+	if err := store.NewAnchor(dir).Save([]byte(`<Error><Code>AccessDenied</Code></Error>`)); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		ZoneURL:   zoneSrv.URL,
+		AnchorURL: anchorSrv.URL,
+		DataDir:   dir,
+	}
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatalf("runOnce() error = %v, want automatic re-baseline", err)
+	}
+
+	data, err := store.NewAnchor(dir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != anchorXML {
+		t.Errorf("anchor snapshot was not re-baselined:\n%s", data)
+	}
+	entries, err := store.NewAnchorHistory(dir).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("anchor history entries = %d, want 0 after re-baseline", len(entries))
+	}
+}
+
+func TestRunOnceRebaselinesOnCorruptTLDSnapshot(t *testing.T) {
+	const goodZone = ".\t86400\tIN\tNS\ta.root-servers.net.\n"
+	zoneSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(goodZone))
+	}))
+	defer zoneSrv.Close()
+	tldData := tldList("2026102900", "COM", "NET")
+	tldSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(tldData))
+	}))
+	defer tldSrv.Close()
+
+	dir := t.TempDir()
+	if err := store.NewTLD(dir).Save([]byte("\n")); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		ZoneURL: zoneSrv.URL,
+		TLDURL:  tldSrv.URL,
+		DataDir: dir,
+	}
+	if err := runOnce(context.Background(), cfg, ""); err != nil {
+		t.Fatalf("runOnce() error = %v, want automatic re-baseline", err)
+	}
+
+	data, err := store.NewTLD(dir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != tldData {
+		t.Errorf("TLD snapshot was not re-baselined:\n%s", data)
+	}
+	entries, err := store.NewTLDHistory(dir).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("TLD history entries = %d, want 0 after re-baseline", len(entries))
+	}
+}
