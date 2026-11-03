@@ -32,7 +32,7 @@ pre-commit install
 ## Configuration
 
 Copy [`config.yaml.example`](config.yaml.example) to `config.yaml` and fill in secrets.
-A minimal example:
+An example:
 
 ```yaml
 zone_url: "https://www.internic.net/domain/root.zone"
@@ -41,6 +41,7 @@ anchor_url: "https://data.iana.org/root-anchors/root-anchors.xml"
 # Source of the IANA TLD list. Leave empty to disable TLD list monitoring (defaults to IANA)
 tld_url: "https://data.iana.org/TLD/tlds-alpha-by-domain.txt"
 fetch_interval: "2h"
+# VPS data directory. Use "./data" for local runs.
 data_dir: "/var/lib/dns-root-diff"
 slack:
   enabled: false
@@ -71,7 +72,9 @@ bluesky:
   max_post_chars: 300
 ```
 
-Credentials in the config (or env) auto-enable the corresponding notifier even when `enabled: false` is set; set credentials empty to disable.
+Twitter and BlueSky credentials in `config.yaml` (or env) auto-enable their notifier even when `enabled: false` is set. Slack is auto-enabled only by the `SLACK_WEBHOOK_URL` environment variable; when the webhook comes from `config.yaml`, set `slack.enabled: true`. To disable a notifier, clear its credentials.
+
+OAuth 2.0 tokens supplied through environment variables are re-applied on every reload, so tokens refreshed by the service cannot be persisted in that setup. Put `oauth2_access_token` / `oauth2_refresh_token` in `config.yaml` when relying on automatic refresh.
 
 Overridable via environment variables:
 
@@ -95,8 +98,11 @@ Overridable via environment variables:
 - `BLUESKY_HANDLE`
 - `BLUESKY_APP_PASSWORD`
 - `BLUESKY_API_URL`
-- `BLUESKY_ENABLED`
 - `BLUESKY_MAX_POST_CHARS`
+
+`BLUESKY_ENABLED` is also read, but it has no practical effect: credentials auto-enable the notifier, and no notifier is created without credentials. Disable BlueSky by clearing `handle` / `app_password`.
+
+Credentials (including OAuth tokens) are reloaded on every tick. `web.*`, `fetch_interval`, `data_dir`, and the source URLs are not fully re-applied on reload; restart the service after changing them.
 
 ## Change Categories and Notification Content
 
@@ -105,7 +111,7 @@ Detected changes are categorized by RR type.
 | Category | RR types |
 | --- | --- |
 | `delegation` | NS |
-| `DNSSEC` | DS, DNSKEY, NSEC, NSEC3PARAM |
+| `DNSSEC` | DS, DNSKEY, NSEC, NSEC3, NSEC3PARAM, CDS, CDNSKEY |
 | `glue` | A, AAAA |
 | `signature` | RRSIG |
 | `zone` | SOA, ZONEMD |
@@ -116,7 +122,7 @@ The root zone is re-signed every 12 hours, at which point about 2,800 RRSIG reco
 
 The first run (no previous snapshot) only saves a baseline snapshot; no notification or history is recorded, since every record would otherwise be reported as added.
 
-Whether a change is mechanical is determined not by RR type but by **pairing old and new records**. Because an RRset with multiple records is decomposed into removed + added (not folded into a "modified" diff), re-signing pairs records by their unchanged fields and TTL, and only unpaired records are treated as mechanical changes.
+Whether a change is mechanical is determined not by RR type but by **pairing old and new records**. Because an RRset with multiple records is decomposed into removed + added (not folded into a "modified" diff), re-signing pairs records by their unchanged fields and TTL, and only paired records are treated as mechanical changes. Unpaired additions/removals (missing signatures, algorithm rollover, etc.) remain substantive.
 
 | RR type | Fields used for pairing | Fields allowed to change |
 | --- | --- | --- |
@@ -134,14 +140,14 @@ Therefore the following are notified as substantive changes:
 
 The key tag is not included in the pairing fields. A ZSK rollover changes the key tag of all RRSIGs at once, but the key change itself is already notified as an apex DNSKEY change. Conversely, a signature algorithm rollover leaves all RRSIGs unpaired and is notified as a large batch of changes (an event expected only once every few decades, so it is intentionally left as-is).
 
-When a run has substantive changes, it is notified in the following format. X splits at 280 characters and Slack at 3,500 characters; when more than one message is needed, a `(1/3)`-style number is added to the title line.
+When a run has substantive changes, it is notified in the following format. X splits at 280 weighted characters, Slack at 3,500 characters, and BlueSky at `max_post_chars` (default 300); when more than one message is needed, a `(1/3)`-style number is added to the title line.
 
 The title line names the SOA serials the delta is between, so which serial-to-serial change a message reports is clear from the first line alone (the serial transition is not repeated in the body). When the diff contains no SOA change (such as a root anchors or TLD list notification), the title falls back to `DNS Root Zone changes` / `DNS Root Anchors changes` / `DNS TLD List changes`.
 
 ```
 2026072501 -> 2026072502 changes (1/2)
 delegation 2 / DNSSEC 1 / glue 2
-re-signing: 2800 RRSIG (omitted)
+re-signing: 5600 RRSIG (omitted)
 
 [delegation]
   - gone. NS ns1.dns.nic.gone.
@@ -150,7 +156,7 @@ re-signing: 2800 RRSIG (omitted)
   + newgtld. DS 12345 8 2 A1B2C3D4E5F60718293A4B5C6D7E8F...
 ```
 
-The breakdown is listed per record (RData capped at 40 characters). When it does not fit within the limit (`max_posts`), it switches to per-record lines with the RData shortened to its leading fields; for DS records this keeps the key tag / algorithm / digest type (`  + newgtld. DS 12345 8 2 ...`). If it still does not fit, it switches to per-TLD aggregation (`  example. NS +1 -1`), and if it still does not fit, the dropped count is shown explicitly at the end as `... +N more changes`.
+The `re-signing` count is the number of RRSIG changes (removed + added), roughly twice the number of replaced records. The breakdown is listed per record (RData capped at 40 characters before a trailing `...`). When it does not fit within the limit (`max_posts`), it switches to per-record lines with the RData shortened to its leading fields; for DS records this keeps the key tag / algorithm / digest type (`  + newgtld. DS 12345 8 2 ...`). If it still does not fit, it switches to per-TLD aggregation (`  example. NS +1 -1`), and if it still does not fit, the dropped count is shown explicitly at the end as `... +N more changes`. Slack sends at most 3 messages and X at most `max_posts`; BlueSky has no message-count cap, only `max_post_chars` per post.
 
 DNSKEY / CDNSKEY detail lines carry an annotation with the key tag, role, and key size so the key can be identified. The annotation is appended after the (truncated) RData for both the full RData (40 characters) and the shortened form. The key tag is computed per RFC 4034 Appendix B, the key size from the public key per RFC 3110 (RSA), and the role (KSK / ZSK) from the SEP bit. The size is shown as `2048b` for RSA and as `p256` / `ed25519` for ECDSA / EdDSA; it is omitted when it cannot be computed:
 
@@ -172,6 +178,10 @@ delegation 2 / DNSSEC 1 / glue 2
 [DNSSEC]
   + newgtld. DS 12345 8 2 A1B2C3D4E5F60718293A4B5C6D7E8F...
 ```
+
+## Failure handling
+
+The snapshot is saved before notification and history. If the process stops between the snapshot save and notification, that change is not notified again (the next run sees no diff) and its history entry is lost. If saving the snapshot fails, the run aborts before notifying and the next tick retries the same diff. Notification failures are logged and not retried; history is still written (unless that write also fails, in which case it is only logged).
 
 ## Root Anchors (DNSSEC Trust Anchors) Monitoring
 
@@ -258,7 +268,7 @@ make frontend-install  # first time only
 make frontend-build    # outputs to internal/web/static
 ```
 
-If you expose it to the internet, a reverse proxy with TLS termination via nginx is recommended. See [deploy/nginx.conf.example](deploy/nginx.conf.example) for an example configuration and SELinux / firewalld steps.
+If you expose it to the internet, a reverse proxy with TLS termination via nginx is recommended. See [deploy/nginx.conf.example](deploy/nginx.conf.example) for an example configuration. Its SELinux / firewalld notes apply to RHEL-family hosts; Ubuntu uses AppArmor/ufw. The example keeps the `listen ... http2` form because Ubuntu 24.04 ships nginx 1.24; on nginx 1.25.1+ switch to `http2 on;` (a comment in the file shows where).
 
 ## Tracing (OpenTelemetry)
 
@@ -300,8 +310,9 @@ sudo systemctl daemon-reload
 sudo systemctl restart dns-root-diff
 ```
 
-All other settings (headers, TLS, compression, timeouts) follow the standard
-OpenTelemetry environment variables (`OTEL_EXPORTER_OTLP_*`). Any OTLP-compatible backend
+The exporter is OTLP/gRPC. Settings such as headers, TLS, compression, and timeouts
+follow the standard `OTEL_EXPORTER_OTLP_*` environment variables. `OTEL_EXPORTER_OTLP_PROTOCOL`
+is not used (HTTP/protobuf is not supported). Any OTLP-compatible backend
 (Zabbix 8.0 APM, Grafana Tempo, Jaeger, ...) can be used.
 
 ## Testing

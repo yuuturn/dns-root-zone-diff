@@ -32,7 +32,7 @@ pre-commit install
 ## 設定
 
 [`config.yaml.example`](config.yaml.example) を `config.yaml` にコピーして秘密情報を埋める。
-最小例:
+設定例:
 
 ```yaml
 zone_url: "https://www.internic.net/domain/root.zone"
@@ -41,6 +41,7 @@ anchor_url: "https://data.iana.org/root-anchors/root-anchors.xml"
 # IANA の TLD リストの取得元。空にすると TLD リスト監視を無効化 (省略時は IANA)
 tld_url: "https://data.iana.org/TLD/tlds-alpha-by-domain.txt"
 fetch_interval: "2h"
+# VPS 用のデータディレクトリ。ローカル実行では "./data" にする。
 data_dir: "/var/lib/dns-root-diff"
 slack:
   enabled: false
@@ -71,7 +72,9 @@ bluesky:
   max_post_chars: 300
 ```
 
-設定ファイルまたは環境変数に認証情報があると、`enabled: false` でも該当 notifier は自動有効化される。無効にする場合は認証情報を空にする。
+Twitter / BlueSky は `config.yaml` (または環境変数) の認証情報があると、`enabled: false` でも自動有効化される。Slack が自動有効化されるのは `SLACK_WEBHOOK_URL` 環境変数を設定した場合だけで、`config.yaml` の webhook を使う場合は `slack.enabled: true` が必要。無効にする場合は認証情報を空にする。
+
+環境変数で OAuth 2.0 トークンを渡した場合、リロードのたびに環境変数の値が再適用されるため、サービスが refresh したトークンを永続化できない。自動更新を使う場合は `oauth2_access_token` / `oauth2_refresh_token` を `config.yaml` に書く。
 
 環境変数で上書き可能:
 
@@ -95,8 +98,11 @@ bluesky:
 - `BLUESKY_HANDLE`
 - `BLUESKY_APP_PASSWORD`
 - `BLUESKY_API_URL`
-- `BLUESKY_ENABLED`
 - `BLUESKY_MAX_POST_CHARS`
+
+`BLUESKY_ENABLED` も読み込まれるが実質的な効果はない。認証情報があれば自動有効化され、認証情報が無ければ notifier は作られないため。無効化は `handle` / `app_password` を空にする。
+
+認証情報 (OAuth トークンを含む) は毎 tick 再読み込みされる。`web.*`、`fetch_interval`、`data_dir`、取得元 URL は再読み込みでは完全には反映されないため、変更後はサービスを再起動すること。
 
 ## 変更のカテゴリと通知の内容
 
@@ -105,7 +111,7 @@ bluesky:
 | カテゴリ | 対象 RR type |
 | --- | --- |
 | `delegation` | NS |
-| `DNSSEC` | DS, DNSKEY, NSEC, NSEC3PARAM |
+| `DNSSEC` | DS, DNSKEY, NSEC, NSEC3, NSEC3PARAM, CDS, CDNSKEY |
 | `glue` | A, AAAA |
 | `signature` | RRSIG |
 | `zone` | SOA, ZONEMD |
@@ -144,8 +150,9 @@ key tag は組を作るフィールドに含めない。ZSK ロールオーバ�
 逆に署名アルゴリズムのロールオーバーは全 RRSIG が組にならず大量の変更として通知される
 (数十年に一度の事象なので意図的にそのままにしている)。
 
-実質的な変更があった回は次の形式で通知する。X は280文字ごと、Slack は3,500文字ごとに
-分割し、2通以上になる場合はタイトル行に `(1/3)` のような番号を付ける。
+実質的な変更があった回は次の形式で通知する。X は280文字 (重み付き)、Slack は3,500文字、
+BlueSky は `max_post_chars` (既定 300) ごとに分割し、2通以上になる場合はタイトル行に
+`(1/3)` のような番号を付ける。
 
 タイトル行には「どのシリアル値からどのシリアル値への差分か」を載せるため、1通目だけで
 どの回の差分かが分かる (同じ遷移を本文の serial 行で繰り返さない)。差分に SOA の変更が
@@ -155,7 +162,7 @@ key tag は組を作るフィールドに含めない。ZSK ロールオーバ�
 ```
 2026072501 -> 2026072502 changes (1/2)
 delegation 2 / DNSSEC 1 / glue 2
-re-signing: 2800 RRSIG (omitted)
+re-signing: 5600 RRSIG (omitted)
 
 [delegation]
   - gone. NS ns1.dns.nic.gone.
@@ -164,12 +171,14 @@ re-signing: 2800 RRSIG (omitted)
   + newgtld. DS 12345 8 2 A1B2C3D4E5F60718293A4B5C6D7E8F...
 ```
 
-明細はまずレコード単位 (RDATA は40文字まで) で載せる。上限 (`max_posts`) に
-収まらない場合は RDATA を先頭フィールドだけに短縮したレコード単位へ切り替える。
+`re-signing` の件数は RRSIG の変更件数 (removed + added) で、入れ替わったレコード数の
+約2倍になる。明細はまずレコード単位 (RDATA は40文字まで。切り詰め時は末尾に `...`) で載せる。
+上限 (`max_posts`) に収まらない場合は RDATA を先頭フィールドだけに短縮したレコード単位へ切り替える。
 DS 系は DNSKEY を特定できる key tag / algorithm / digest type まで残す
 (`  + newgtld. DS 12345 8 2 ...`)。それでも収まらない場合は TLD ごとの集約
 (`  example. NS +1 -1`) に切り替え、最後まで収まらない場合は末尾に
-`... +N more changes` として落とした件数を明記する。
+`... +N more changes` として落とした件数を明記する。Slack は最大3通、X は最大
+`max_posts` 通で、BlueSky は通数上限がなく `max_post_chars` のみ。
 
 DNSKEY / CDNSKEY の明細には、鍵を識別できるよう key tag / ロール / 鍵長の注記を
 付ける。注記はフル RDATA (40文字)・短縮 RDATA のどちらでも、切り詰めた RDATA の
@@ -197,6 +206,14 @@ delegation 2 / DNSSEC 1 / glue 2
 [DNSSEC]
   + newgtld. DS 12345 8 2 A1B2C3D4E5F60718293A4B5C6D7E8F...
 ```
+
+## 失敗時の扱い
+
+スナップショットは通知・履歴より先に保存する。スナップショット保存後、通知前にプロセスが
+停止すると、その変更は次回以降再検知されず通知されず、履歴にも残らない
+(次回は差分ゼロになる)。スナップショット保存に失敗した場合は通知前に中断し、
+次 tick で同じ差分を再試行する。通知の失敗はログのみで再試行しない。履歴は通知後に
+書き込むため、通知が失敗しても履歴は残る (履歴の書き込み自体が失敗した場合はログのみ)。
 
 ## Root Anchors (DNSSEC トラストアンカー) の監視
 
@@ -303,7 +320,10 @@ make frontend-build    # internal/web/static に出力される
 ```
 
 インターネットへ公開する場合は nginx で TLS 終端するリバースプロキシを推奨。
-設定例と SELinux / firewalld の手順は [deploy/nginx.conf.example](deploy/nginx.conf.example) を参照。
+設定例は [deploy/nginx.conf.example](deploy/nginx.conf.example) を参照。SELinux / firewalld の
+記述は RHEL 系向けで、Ubuntu は AppArmor / ufw を使う。Ubuntu 24.04 の nginx 1.24 でも動くよう
+`listen ... http2` 形式にしてあり、nginx 1.25.1 以降では `http2 on;` に切り替える
+(ファイル内のコメント参照)。
 
 ## トレース (OpenTelemetry)
 
@@ -344,9 +364,10 @@ sudo systemctl daemon-reload
 sudo systemctl restart dns-root-diff
 ```
 
-エンドポイント以外の設定 (ヘッダー / TLS / 圧縮 / タイムアウト) は OpenTelemetry の標準環境変数
-(`OTEL_EXPORTER_OTLP_*`) に従う。OTLP に対応したバックエンド (Zabbix 8.0 の APM、Grafana Tempo、
-Jaeger など) へそのまま送信できる。
+エクスポーターは OTLP/gRPC。ヘッダー / TLS / 圧縮 / タイムアウトなどの設定は
+OpenTelemetry の標準環境変数 (`OTEL_EXPORTER_OTLP_*`) に従う。
+`OTEL_EXPORTER_OTLP_PROTOCOL` は使われない (HTTP/protobuf は非対応)。OTLP に対応した
+バックエンド (Zabbix 8.0 の APM、Grafana Tempo、Jaeger など) へそのまま送信できる。
 
 ## テスト
 
