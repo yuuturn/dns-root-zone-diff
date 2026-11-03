@@ -102,7 +102,7 @@ Overridable via environment variables:
 
 `BLUESKY_ENABLED` is also read, but it has no practical effect: credentials auto-enable the notifier, and no notifier is created without credentials. Disable BlueSky by clearing `handle` / `app_password`.
 
-Credentials (including OAuth tokens) are reloaded on every tick. `web.*`, `fetch_interval`, `data_dir`, and the source URLs are not fully re-applied on reload; restart the service after changing them.
+Credentials (including OAuth tokens), `zone_url` / `anchor_url` / `tld_url`, and `data_dir` are reloaded on every tick; source URL changes apply to the next fetch. Restart is required for `fetch_interval` (the ticker is created at startup) and `web.enabled` / `web.listen` (the listener is bound at startup). A changed `data_dir` applies to new snapshots and history, but the Web UI keeps using the history directory captured at startup.
 
 ## Change Categories and Notification Content
 
@@ -140,7 +140,7 @@ Therefore the following are notified as substantive changes:
 
 The key tag is not included in the pairing fields. A ZSK rollover changes the key tag of all RRSIGs at once, but the key change itself is already notified as an apex DNSKEY change. Conversely, a signature algorithm rollover leaves all RRSIGs unpaired and is notified as a large batch of changes (an event expected only once every few decades, so it is intentionally left as-is).
 
-When a run has substantive changes, it is notified in the following format. X splits at 280 weighted characters, Slack at 3,500 characters, and BlueSky at `max_post_chars` (default 300); when more than one message is needed, a `(1/3)`-style number is added to the title line.
+When a run has substantive changes, it is notified in the following format. X splits at 280 weighted characters, Slack at 3,500 characters, and BlueSky at `max_post_chars` (default 300); when more than one message is needed, a `(1/3)`-style number is added to the title line. The example below is the Slack/BlueSky form, which includes the `re-signing` line; X omits that line (see the X example later).
 
 The title line names the SOA serials the delta is between, so which serial-to-serial change a message reports is clear from the first line alone (the serial transition is not repeated in the body). When the diff contains no SOA change (such as a root anchors or TLD list notification), the title falls back to `DNS Root Zone changes` / `DNS Root Anchors changes` / `DNS TLD List changes`.
 

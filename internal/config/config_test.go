@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,15 +11,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestExampleConfigParses は config.yaml.example が実際の Config と
-// 構文・キー名の両面でずれていないことを検証する。
+// TestExampleConfigParses は config.yaml.example が実際の Config として
+// 未知キーなしでパースでき、主要な値も実装と一致することを検証する。
 func TestExampleConfigParses(t *testing.T) {
 	data, err := os.ReadFile("../../config.yaml.example")
 	if err != nil {
 		t.Fatalf("read config.yaml.example: %v", err)
 	}
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil {
 		t.Fatalf("parse config.yaml.example: %v", err)
 	}
 	if cfg.ZoneURL != "https://www.internic.net/domain/root.zone" {
