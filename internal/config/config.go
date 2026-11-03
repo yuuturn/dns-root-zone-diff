@@ -127,9 +127,9 @@ func Load(path string) (Config, error) {
 // path が空の場合は何もしない。
 //
 // ファイル全体を再シリアライズせず yaml.Node 上で対象キーのみ書き換える。
-// これによりコメントや書式、未定義キーが保持され、また未指定キーにデフォルト値が
-// 追記される (例: anchor_url が省略された構成で root anchors 監視が有効化される)
-// 事故を防ぐ。
+// これによりコメントや書式、未指定キーにデフォルト値が追記される事故を防ぐ。
+// なお root anchors を無効化するには anchor_url を明示的に空にする必要がある
+// (キーを省略すると Default の IANA URL が使われ、監視は有効のまま)。
 func SaveOAuth2Tokens(path, accessToken, refreshToken string) error {
 	if path == "" {
 		return nil

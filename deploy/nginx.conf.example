@@ -7,7 +7,9 @@
 #     enabled: true
 #     listen: "127.0.0.1:8080"
 #
-# Rocky Linux (SELinux enforcing) では nginx から upstream への接続を許可する:
+# SELinux / firewalld の手順は RHEL 系 (Rocky Linux など) 向け。
+# Ubuntu 24.04 は AppArmor / ufw を使うため、以下の setsebool / firewall-cmd は不要。
+# SELinux enforcing では nginx から upstream への接続を許可する:
 #   sudo setsebool -P httpd_can_network_connect 1
 #   (リバースプロキシ用途に絞る場合は httpd_can_network_relay でも可)
 #
@@ -45,9 +47,11 @@ server {
 }
 
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+    # Ubuntu 24.04 の nginx 1.24 でも動くよう listen の http2 パラメータを使う。
+    # nginx 1.25.1 以降ではこのパラメータは非推奨なので、
+    # `listen 443 ssl;` + `http2 on;` に置き換えること。
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name dns-root-diff.example.com;
 
     ssl_certificate     /etc/letsencrypt/live/dns-root-diff.example.com/fullchain.pem;

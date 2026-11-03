@@ -66,7 +66,7 @@ make deploy
 
 `make deploy` は `deploy/deploy.sh` を呼ぶ (Makefile 内に重複ロジックを持たない)。
 
-VPS では事前に `/etc/dns-root-diff/config.yaml` を配置し、`dns-root-diff` ユーザーが読み取れる必要がある。
+VPS では事前に `/etc/dns-root-diff/config.yaml` を配置し、`dns-root-diff` ユーザーが読み取り・書き込みできる必要がある (OAuth トークンの書き戻しに使う)。
 
 X 通知は OAuth 2.0 ユーザートークン方式で、アクセストークンは 2時間で失効する。refresh_token による自動更新を行い、更新後のトークンを `/etc/dns-root-diff/config.yaml` へ永続化するため、systemd unit には当該ディレクトリへの書き込み許可 (`ReadWritePaths`) が必要。
 
