@@ -111,6 +111,10 @@ func Load(path string) (Config, error) {
 	if cfg.Twitter.MaxPosts <= 0 {
 		cfg.Twitter.MaxPosts = defaultTwitterMaxPosts
 	}
+	// max_post_chars の省略・不正値も同様にデフォルトへ補正する。
+	if cfg.Bluesky.MaxPostChars <= 0 {
+		cfg.Bluesky.MaxPostChars = defaultBlueskyMaxPostChars
+	}
 	// fetch_interval の 0・負値は runLoop の time.NewTicker が panic するため
 	// デフォルトに補正する (MaxPosts と同じパターン)。
 	if cfg.FetchInterval <= 0 {

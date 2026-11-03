@@ -484,6 +484,44 @@ func TestRunOnceAnchorDetectsAndNotifies(t *testing.T) {
 	}
 }
 
+func TestRunOnceContinuesAfterZoneFailure(t *testing.T) {
+	// zone 取得が失敗しても root anchors / TLD は同じ tick で実行する。
+	zoneSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "zone unavailable", http.StatusBadGateway)
+	}))
+	defer zoneSrv.Close()
+	anchorSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(anchorXML))
+	}))
+	defer anchorSrv.Close()
+	tldData := tldList("2026102900", "COM", "NET")
+	tldSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(tldData))
+	}))
+	defer tldSrv.Close()
+
+	dir := t.TempDir()
+	cfg := config.Config{
+		ZoneURL:   zoneSrv.URL,
+		AnchorURL: anchorSrv.URL,
+		TLDURL:    tldSrv.URL,
+		DataDir:   dir,
+	}
+	err := runOnce(context.Background(), cfg, "")
+	if err == nil {
+		t.Fatal("runOnce() error = nil, want zone fetch failure")
+	}
+	if !strings.Contains(err.Error(), "fetch zone") {
+		t.Errorf("runOnce() error = %v, want fetch zone failure", err)
+	}
+	if !store.NewAnchor(dir).Exists() {
+		t.Error("anchor snapshot should still be saved when zone fetch fails")
+	}
+	if !store.NewTLD(dir).Exists() {
+		t.Error("TLD snapshot should still be saved when zone fetch fails")
+	}
+}
+
 func TestRunOnceSkipsAnchorsWhenDisabled(t *testing.T) {
 	// AnchorURL が空なら anchor 取得に行かない (既存テストの前提を固定化)。
 	zoneSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

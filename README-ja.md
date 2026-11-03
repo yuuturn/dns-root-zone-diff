@@ -31,7 +31,8 @@ pre-commit install
 
 ## 設定
 
-`config.yaml` を作成:
+[`config.yaml.example`](config.yaml.example) を `config.yaml` にコピーして秘密情報を埋める。
+最小例:
 
 ```yaml
 zone_url: "https://www.internic.net/domain/root.zone"
@@ -46,10 +47,17 @@ slack:
   webhook_url: ""
 twitter:
   enabled: false
+  # OAuth 1.0a (レガシー)。本番は OAuth 2.0 を推奨。
   api_key: ""
   api_secret: ""
   access_token: ""
   access_secret: ""
+  # OAuth 2.0 ユーザートークン (推奨)。アクセストークンは約2時間で失効し、
+  # refresh_token で自動更新され、更新後のトークンはこのファイルへ書き戻される。
+  oauth2_access_token: ""
+  oauth2_refresh_token: ""
+  oauth2_client_id: ""
+  oauth2_client_secret: ""
   # 1回の検知で連投する最大ツイート数 (省略時 6)
   max_posts: 6
 web:
@@ -63,6 +71,8 @@ bluesky:
   max_post_chars: 300
 ```
 
+設定ファイルまたは環境変数に認証情報があると、`enabled: false` でも該当 notifier は自動有効化される。無効にする場合は認証情報を空にする。
+
 環境変数で上書き可能:
 
 - `DNS_ROOT_DIFF_ZONE_URL`
@@ -75,12 +85,17 @@ bluesky:
 - `TWITTER_API_SECRET`
 - `TWITTER_ACCESS_TOKEN`
 - `TWITTER_ACCESS_SECRET`
+- `TWITTER_OAUTH2_ACCESS_TOKEN`
+- `TWITTER_OAUTH2_REFRESH_TOKEN`
+- `TWITTER_OAUTH2_CLIENT_ID`
+- `TWITTER_OAUTH2_CLIENT_SECRET`
 - `TWITTER_MAX_POSTS`
 - `DNS_ROOT_DIFF_WEB_ENABLED`
 - `DNS_ROOT_DIFF_WEB_LISTEN`
 - `BLUESKY_HANDLE`
 - `BLUESKY_APP_PASSWORD`
 - `BLUESKY_API_URL`
+- `BLUESKY_ENABLED`
 - `BLUESKY_MAX_POST_CHARS`
 
 ## 変更のカテゴリと通知の内容
@@ -99,8 +114,8 @@ bluesky:
 
 root zone は12時間ごとに再署名され、その際 RRSIG 約2,800レコードが入れ替わって
 SOA serial と ZONEMD の serial/digest も更新される。この**機械的な変更**
-(差分5,000件超になる) だけの回は **Slack / X へ通知しない**。Web UI には全件が
-履歴として残る。
+(対応付けできた RRSIG / SOA / ZONEMD の更新のみで、実質的な差分が無い回) だけの
+場合は **Slack / X / BlueSky へ通知しない**。Web UI には全件が履歴として残る。
 
 初回実行 (前回スナップショットなし) はベースラインとしてスナップショット保存のみ
 行い、通知・履歴記録はしない (全レコードが added として通知されるのを防ぐため)。
@@ -342,8 +357,17 @@ make lint
 
 ## VPS へのデプロイ
 
+初回デプロイ前に VPS 側で次を用意する:
+
+1. `dns-root-diff` ユーザー/グループを作成し、[`deploy/dns-root-diff.service`](deploy/dns-root-diff.service) を `/etc/systemd/system/` に配置する。
+2. `config.yaml` を `/etc/dns-root-diff/config.yaml` に置く (当該ユーザーが読み書き可能であること。OAuth 2.0 トークン更新はこのファイルへ書き戻す)。
+3. `data_dir: "/var/lib/dns-root-diff"` とし、systemd の `StateDirectory=dns-root-diff` と揃える。
+4. 必要なら [`deploy/nginx.conf.example`](deploy/nginx.conf.example) を参考に nginx を設定する。
+
+開発マシン (macOS arm64 → linux/amd64 クロスコンパイル) から:
+
 ```bash
 make deploy
 ```
 
-VPS には事前に専用ユーザーとデータディレクトリを作成して config.yaml を配置する必要があります。
+`make deploy` は [`deploy/deploy.sh`](deploy/deploy.sh) を実行する (クロスコンパイル、scp、利用可能なら `restorecon`、`daemon-reload`、再起動、status 確認)。

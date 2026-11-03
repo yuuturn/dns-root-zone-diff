@@ -1,0 +1,44 @@
+# dns-root-diff configuration example.
+# Copy to config.yaml (gitignored) and fill in secrets.
+# Production path on the VPS: /etc/dns-root-diff/config.yaml
+
+zone_url: "https://www.internic.net/domain/root.zone"
+# DNSSEC trust anchors (root anchors). Leave empty to disable monitoring.
+anchor_url: "https://data.iana.org/root-anchors/root-anchors.xml"
+# IANA TLD list. Leave empty to disable monitoring.
+tld_url: "https://data.iana.org/TLD/tlds-alpha-by-domain.txt"
+fetch_interval: "2h"
+# Must match systemd StateDirectory on the VPS (/var/lib/dns-root-diff).
+data_dir: "/var/lib/dns-root-diff"
+
+slack:
+  enabled: false
+  webhook_url: ""
+
+twitter:
+  enabled: false
+  # OAuth 1.0a (legacy). Prefer OAuth 2.0 below for production.
+  api_key: ""
+  api_secret: ""
+  access_token: ""
+  access_secret: ""
+  # OAuth 2.0 user access token (recommended). Access tokens expire in ~2h;
+  # refresh_token is used to renew them, and updated tokens are written back
+  # to this file (systemd ReadWritePaths must include the config directory).
+  oauth2_access_token: ""
+  oauth2_refresh_token: ""
+  oauth2_client_id: ""
+  oauth2_client_secret: ""
+  # Maximum tweets posted for a single detection (default: 6)
+  max_posts: 6
+
+bluesky:
+  enabled: false
+  handle: ""
+  app_password: ""
+  api_url: "https://bsky.social/xrpc"
+  max_post_chars: 300
+
+web:
+  enabled: false
+  listen: "127.0.0.1:8080"
