@@ -1,12 +1,39 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
+
+// TestExampleConfigParses は config.yaml.example が実際の Config として
+// 未知キーなしでパースでき、主要な値も実装と一致することを検証する。
+func TestExampleConfigParses(t *testing.T) {
+	data, err := os.ReadFile("../../config.yaml.example")
+	if err != nil {
+		t.Fatalf("read config.yaml.example: %v", err)
+	}
+	var cfg Config
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil {
+		t.Fatalf("parse config.yaml.example: %v", err)
+	}
+	if cfg.ZoneURL != "https://www.internic.net/domain/root.zone" {
+		t.Errorf("ZoneURL = %q", cfg.ZoneURL)
+	}
+	if cfg.FetchInterval != 2*time.Hour {
+		t.Errorf("FetchInterval = %v, want 2h", cfg.FetchInterval)
+	}
+	if cfg.DataDir == "" {
+		t.Error("DataDir is empty in config.yaml.example")
+	}
+}
 
 func TestDefault(t *testing.T) {
 	cfg := Default()
@@ -135,7 +162,7 @@ func TestSaveOAuth2TokensPreservesCommentsAndOmittedKeys(t *testing.T) {
 	path := filepath.Join(dir, "config.yaml")
 	content := `# managed by ops: do not edit manually
 zone_url: "https://example.com/root.zone"
-# anchor monitoring intentionally disabled (key omitted)
+# root anchors key omitted: the token save must not add defaults
 twitter:
   enabled: true
   oauth2_access_token: "old-access"
@@ -172,6 +199,10 @@ twitter:
 	}
 	if cfg.Twitter.OAuth2ClientID != "clientid" {
 		t.Errorf("OAuth2ClientID = %q, want clientid preserved", cfg.Twitter.OAuth2ClientID)
+	}
+	// 省略は「無効」ではなく Default の IANA URL (監視有効) になる。
+	if cfg.AnchorURL != Default().AnchorURL {
+		t.Errorf("AnchorURL = %q, want default IANA URL when omitted", cfg.AnchorURL)
 	}
 }
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=DNS Root Zone Change Notification
+Description=DNS Root Zone / Root Anchors / TLD Change Notification
 After=network-online.target
 Wants=network-online.target
 

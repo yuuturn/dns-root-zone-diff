@@ -9,9 +9,12 @@ anchor_url: "https://data.iana.org/root-anchors/root-anchors.xml"
 tld_url: "https://data.iana.org/TLD/tlds-alpha-by-domain.txt"
 fetch_interval: "2h"
 # Must match systemd StateDirectory on the VPS (/var/lib/dns-root-diff).
+# Use "./data" for local runs.
 data_dir: "/var/lib/dns-root-diff"
 
 slack:
+  # Credentials in this file do not auto-enable Slack; set enabled: true.
+  # (The SLACK_WEBHOOK_URL environment variable does auto-enable it.)
   enabled: false
   webhook_url: ""
 
@@ -25,6 +28,8 @@ twitter:
   # OAuth 2.0 user access token (recommended). Access tokens expire in ~2h;
   # refresh_token is used to renew them, and updated tokens are written back
   # to this file (systemd ReadWritePaths must include the config directory).
+  # Set these here rather than in TWITTER_OAUTH2_* env vars: env values are
+  # re-applied on every reload and would shadow refreshed tokens.
   oauth2_access_token: ""
   oauth2_refresh_token: ""
   oauth2_client_id: ""
@@ -33,6 +38,8 @@ twitter:
   max_posts: 6
 
 bluesky:
+  # handle + app_password auto-enable the notifier. BLUESKY_ENABLED has no
+  # practical effect (clear the credentials to disable).
   enabled: false
   handle: ""
   app_password: ""
