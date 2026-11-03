@@ -3,8 +3,10 @@
 package anchor
 
 import (
+	"encoding/hex"
 	"encoding/xml"
 	"fmt"
+	"strings"
 
 	"github.com/yfujii/dns-root-diff/internal/diff"
 	"github.com/yfujii/dns-root-diff/internal/zone"
@@ -44,6 +46,7 @@ type keyDigestXML struct {
 }
 
 type trustAnchorXML struct {
+	XMLName   xml.Name       `xml:"TrustAnchor"`
 	ID        string         `xml:"id,attr"`
 	Source    string         `xml:"source,attr"`
 	Zone      string         `xml:"Zone"`
@@ -51,14 +54,44 @@ type trustAnchorXML struct {
 }
 
 // Parse は root-anchors.xml のバイト列をパースする。
+//
+// ルート要素が TrustAnchor でない XML (エラーページや任意の well-formed XML) や、
+// KeyDigest が1件も無い応答はエラーにする。これらを空の trust anchor として
+// 受理すると「全キー削除」の誤通知とベースライン破壊につながるため。
 func Parse(data []byte) (TrustAnchors, error) {
 	var raw trustAnchorXML
 	if err := xml.Unmarshal(data, &raw); err != nil {
 		return TrustAnchors{}, fmt.Errorf("parse root anchors xml: %w", err)
 	}
-	ta := TrustAnchors{ID: raw.ID, Source: raw.Source, Zone: raw.Zone}
-	for _, kd := range raw.KeyDigest {
+	ta := TrustAnchors{ID: strings.TrimSpace(raw.ID), Source: raw.Source, Zone: raw.Zone}
+	for i, kd := range raw.KeyDigest {
+		id := strings.TrimSpace(kd.ID)
+		if id == "" {
+			return TrustAnchors{}, fmt.Errorf("parse root anchors xml: KeyDigest[%d] has no id", i)
+		}
+		// RFC 4034 §5.3 では digest は大文字小文字を区別しない hex で、
+		// 空白を含んでもよい。正規化して比較時の誤差分を防ぐ。
+		digest := strings.ToUpper(strings.Join(strings.Fields(kd.Digest), ""))
+		if digest == "" {
+			return TrustAnchors{}, fmt.Errorf("parse root anchors xml: KeyDigest %s has no Digest", id)
+		}
+		if _, err := hex.DecodeString(digest); err != nil {
+			return TrustAnchors{}, fmt.Errorf("parse root anchors xml: KeyDigest %s has invalid Digest: %w", id, err)
+		}
+		if kd.Algorithm == 0 {
+			return TrustAnchors{}, fmt.Errorf("parse root anchors xml: KeyDigest %s has no Algorithm", id)
+		}
+		if kd.DigestType == 0 {
+			return TrustAnchors{}, fmt.Errorf("parse root anchors xml: KeyDigest %s has no DigestType", id)
+		}
+		// KeyTag 0 is not rejected: 0 is a valid key tag value, and the XML
+		// field cannot distinguish "0" from "omitted".
+		kd.ID = id
+		kd.Digest = digest
 		ta.Digests = append(ta.Digests, KeyDigest(kd))
+	}
+	if len(ta.Digests) == 0 {
+		return TrustAnchors{}, fmt.Errorf("parse root anchors xml: no KeyDigest elements")
 	}
 	return ta, nil
 }

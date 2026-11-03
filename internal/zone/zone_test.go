@@ -75,13 +75,12 @@ func TestParseSkipsComments(t *testing.T) {
 	}
 }
 
-func TestParseEmpty(t *testing.T) {
-	records, err := Parse([]byte(""))
-	if err != nil {
-		t.Fatalf("Parse() error = %v", err)
-	}
-	if len(records) != 0 {
-		t.Errorf("got %d records, want 0", len(records))
+func TestParseRejectsEmpty(t *testing.T) {
+	// 空・空白のみ・コメントのみの応答は「全レコード削除」ではなくエラー。
+	for _, input := range []string{"", "\n", "  \n\t\n", "; comment only\n"} {
+		if _, err := Parse([]byte(input)); err == nil {
+			t.Errorf("Parse(%q) = nil error, want error for empty zone", input)
+		}
 	}
 }
 

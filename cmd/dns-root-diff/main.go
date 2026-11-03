@@ -220,7 +220,11 @@ func runZoneOnce(ctx context.Context, cfg config.Config, configPath string) erro
 		}
 		oldRecords, err = zone.Parse(oldData)
 		if err != nil {
-			return fmt.Errorf("parse previous zone: %w", err)
+			// 旧バージョンが壊れた応答を保存している場合、ここで止めると
+			// 正常な応答が来ても永久に復旧できない。ベースラインを取り直す。
+			fmt.Fprintf(os.Stderr, "parse previous zone failed; re-baselining: %v\n", err)
+			oldRecords = nil
+			hadPrevious = false
 		}
 	}
 
@@ -315,7 +319,10 @@ func runAnchorOnce(ctx context.Context, cfg config.Config, configPath string) er
 		}
 		oldTA, err = anchor.Parse(oldData)
 		if err != nil {
-			return fmt.Errorf("parse previous root anchors: %w", err)
+			// 壊れた旧スナップショットで永久に停止しないよう再ベースライン化する。
+			fmt.Fprintf(os.Stderr, "parse previous root anchors failed; re-baselining: %v\n", err)
+			oldTA = anchor.TrustAnchors{}
+			hadPrevious = false
 		}
 	}
 
@@ -396,7 +403,10 @@ func runTLDOnce(ctx context.Context, cfg config.Config, configPath string) error
 		}
 		oldList, err = tld.Parse(oldData)
 		if err != nil {
-			return fmt.Errorf("parse previous TLD list: %w", err)
+			// 壊れた旧スナップショットで永久に停止しないよう再ベースライン化する。
+			fmt.Fprintf(os.Stderr, "parse previous TLD list failed; re-baselining: %v\n", err)
+			oldList = tld.List{}
+			hadPrevious = false
 		}
 	}
 

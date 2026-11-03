@@ -56,6 +56,49 @@ func TestParseInvalid(t *testing.T) {
 	}
 }
 
+func TestParseRejectsWrongRootOrEmptyBundle(t *testing.T) {
+	// 200 で返るエラーページや任意の well-formed XML を「空の trust anchor」
+	// として受理すると、全キー削除の誤通知につながるため拒否する。
+	cases := map[string]string{
+		"error xml":           `<Error><Code>AccessDenied</Code></Error>`,
+		"html":                `<html><body>maintenance</body></html>`,
+		"wrong root":          `<TrustAnchorBundle><X/></TrustAnchorBundle>`,
+		"empty trustanchor":   `<TrustAnchor id="ABC"/>`,
+		"missing id":          `<TrustAnchor id="ABC"><KeyDigest><KeyTag>1</KeyTag><Algorithm>8</Algorithm><DigestType>2</DigestType><Digest>49AAC11D</Digest></KeyDigest></TrustAnchor>`,
+		"missing digest":      `<TrustAnchor id="ABC"><KeyDigest id="K1"><KeyTag>1</KeyTag><Algorithm>8</Algorithm><DigestType>2</DigestType></KeyDigest></TrustAnchor>`,
+		"invalid hex":         `<TrustAnchor id="ABC"><KeyDigest id="K1"><KeyTag>1</KeyTag><Algorithm>8</Algorithm><DigestType>2</DigestType><Digest>ZZZZ</Digest></KeyDigest></TrustAnchor>`,
+		"missing algorithm":   `<TrustAnchor id="ABC"><KeyDigest id="K1"><KeyTag>1</KeyTag><DigestType>2</DigestType><Digest>49AAC11D</Digest></KeyDigest></TrustAnchor>`,
+		"missing digest type": `<TrustAnchor id="ABC"><KeyDigest id="K1"><KeyTag>1</KeyTag><Algorithm>8</Algorithm><Digest>49AAC11D</Digest></KeyDigest></TrustAnchor>`,
+	}
+	for name, input := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(input)); err == nil {
+				t.Errorf("Parse() = nil error for %s", name)
+			}
+		})
+	}
+}
+
+func TestParseNormalizesDigest(t *testing.T) {
+	const input = `<TrustAnchor id="ABC">
+  <KeyDigest id="K1">
+    <KeyTag>12345</KeyTag>
+    <Algorithm>8</Algorithm>
+    <DigestType>2</DigestType>
+    <Digest>49aa c11d 7b6f 6446 702e 54a1 6073 7160
+      7a1a 4185 5200 fd2c e1cd de32 f24e 8fb5</Digest>
+  </KeyDigest>
+</TrustAnchor>`
+
+	ta, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if got := ta.Digests[0].Digest; got != "49AAC11D7B6F6446702E54A1607371607A1A41855200FD2CE1CDDE32F24E8FB5" {
+		t.Errorf("Digest = %q, want uppercase hex without whitespace", got)
+	}
+}
+
 func TestToRecords(t *testing.T) {
 	ta, err := Parse([]byte(sampleXML))
 	if err != nil {

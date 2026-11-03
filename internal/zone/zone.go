@@ -49,6 +49,11 @@ func Parse(data []byte) ([]Record, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan zone data: %w", err)
 	}
+	// 空・コメントのみ・空白のみの応答を「全レコード削除」と解釈すると、
+	// 誤通知とスナップショットの破壊につながるためエラーにする。
+	if len(records) == 0 {
+		return nil, fmt.Errorf("no records found")
+	}
 
 	return records, nil
 }
