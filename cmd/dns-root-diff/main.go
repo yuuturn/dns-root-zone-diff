@@ -118,7 +118,10 @@ func runLoop(cfg config.Config, configPath string) error {
 		case <-ticker.C:
 			// Reload config each tick so refreshed OAuth tokens are picked up.
 			if configPath != "" {
-				if reloaded, err := config.Load(configPath); err == nil {
+				reloaded, err := config.Load(configPath)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "reload config failed: %v\n", err)
+				} else {
 					cfg = reloaded
 				}
 			}
@@ -172,13 +175,19 @@ func runOnce(ctx context.Context, cfg config.Config, configPath string) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "run")
 	defer span.End()
 
+	// zone / root anchors / TLD は独立した監視系統なので、1系統の失敗で
+	// 他をスキップしない。エラーはまとめて返す。
+	var errs []error
 	if err := runZoneOnce(ctx, cfg, configPath); err != nil {
-		return err
+		errs = append(errs, err)
 	}
 	if err := runAnchorOnce(ctx, cfg, configPath); err != nil {
-		return err
+		errs = append(errs, err)
 	}
-	return runTLDOnce(ctx, cfg, configPath)
+	if err := runTLDOnce(ctx, cfg, configPath); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 func runZoneOnce(ctx context.Context, cfg config.Config, configPath string) error {
@@ -221,45 +230,48 @@ func runZoneOnce(ctx context.Context, cfg config.Config, configPath string) erro
 		attribute.Int("zone.records", len(records)),
 		attribute.Int("zone.changes", len(changes)),
 	)
-	if len(changes) == 0 {
-		fmt.Println("no changes detected")
-	} else {
-		fmt.Printf("detected %d changes\n", len(changes))
-		// 初回実行 (前回スナップショットなし) は全レコードが added になるため、
-		// anchors (runAnchorOnce) と同様に通知も履歴も行わない。
-		// 初回に全レコードを通知するのは公開アカウントへのノイズになるため。
-		if hadPrevious {
-			// root zone は12時間ごとに再署名され、その際 RRSIG/SOA/ZONEMD が機械的に入れ替わる。
-			// 実質的な変更を伴わない回は通知しない (Web UI には履歴として残す)。
-			if substantive := diff.Substantive(changes); len(substantive) == 0 {
-				fmt.Println("re-signing only; skipping notification")
-			} else {
-				fmt.Printf("%d substantive changes\n", len(substantive))
-				notifiers := buildNotifiers(cfg, configPath)
-				for _, n := range notifiers {
-					if err := n.Notify(ctx, changes); err != nil {
-						fmt.Fprintf(os.Stderr, "notify %s failed: %v\n", n.Name(), err)
-					}
-				}
-			}
-			oldSerial, _ := zone.SOASerial(oldRecords)
-			newSerial, ok := zone.SOASerial(records)
-			if !ok {
-				// ID 生成にシリアルが必要なため、SOA が取れない場合のフォールバック。
-				newSerial = "unknown"
-			}
-			h := store.NewHistory(cfg.DataDir)
-			entry := store.NewEntry(time.Now().UTC(), oldSerial, newSerial, changes)
-			if err := h.Append(entry); err != nil {
-				fmt.Fprintf(os.Stderr, "record history failed: %v\n", err)
-			}
-		}
-	}
 
+	// スナップショットを先に保存する。通知・履歴の後に Save すると、
+	// Save 失敗時に次 tick で同じ diff が再検出され通知・履歴が重複する。
 	if err := s.Save(data); err != nil {
 		return fmt.Errorf("save zone: %w", err)
 	}
 
+	if len(changes) == 0 {
+		fmt.Println("no changes detected")
+		return nil
+	}
+	fmt.Printf("detected %d changes\n", len(changes))
+	// 初回実行 (前回スナップショットなし) は全レコードが added になるため、
+	// anchors (runAnchorOnce) と同様に通知も履歴も行わない。
+	// 初回に全レコードを通知するのは公開アカウントへのノイズになるため。
+	if !hadPrevious {
+		return nil
+	}
+	// root zone は12時間ごとに再署名され、その際 RRSIG/SOA/ZONEMD が機械的に入れ替わる。
+	// 実質的な変更を伴わない回は通知しない (Web UI には履歴として残す)。
+	if substantive := diff.Substantive(changes); len(substantive) == 0 {
+		fmt.Println("re-signing only; skipping notification")
+	} else {
+		fmt.Printf("%d substantive changes\n", len(substantive))
+		notifiers := buildNotifiers(cfg, configPath)
+		for _, n := range notifiers {
+			if err := n.Notify(ctx, changes); err != nil {
+				fmt.Fprintf(os.Stderr, "notify %s failed: %v\n", n.Name(), err)
+			}
+		}
+	}
+	oldSerial, _ := zone.SOASerial(oldRecords)
+	newSerial, ok := zone.SOASerial(records)
+	if !ok {
+		// ID 生成にシリアルが必要なため、SOA が取れない場合のフォールバック。
+		newSerial = "unknown"
+	}
+	h := store.NewHistory(cfg.DataDir)
+	entry := store.NewEntry(time.Now().UTC(), oldSerial, newSerial, changes)
+	if err := h.Append(entry); err != nil {
+		fmt.Fprintf(os.Stderr, "record history failed: %v\n", err)
+	}
 	return nil
 }
 
@@ -309,37 +321,39 @@ func runAnchorOnce(ctx context.Context, cfg config.Config, configPath string) er
 
 	changes := anchor.Diff(oldTA, ta)
 	diff.SortChanges(changes)
-	if len(changes) == 0 {
-		fmt.Println("no anchor changes detected")
-	} else {
-		fmt.Printf("detected %d anchor changes\n", len(changes))
-		if substantive := diff.Substantive(changes); len(substantive) == 0 {
-			fmt.Println("anchor changes are all mechanical; skipping notification")
-		} else if hadPrevious {
-			fmt.Printf("%d substantive anchor changes\n", len(substantive))
-			notifiers := buildNotifiers(cfg, configPath)
-			for _, n := range notifiers {
-				if err := n.NotifyAnchors(ctx, substantive); err != nil {
-					fmt.Fprintf(os.Stderr, "notify %s (anchors) failed: %v\n", n.Name(), err)
-				}
-			}
-		}
-		// 初回実行 (前回スナップショットなし) は全キーが added になるため履歴には残さない。
-		if hadPrevious {
-			oldSerial := anchor.Serial(oldTA)
-			newSerial := anchor.Serial(ta)
-			h := store.NewAnchorHistory(cfg.DataDir)
-			entry := store.NewEntry(time.Now().UTC(), oldSerial, newSerial, changes)
-			if err := h.Append(entry); err != nil {
-				fmt.Fprintf(os.Stderr, "record anchor history failed: %v\n", err)
-			}
-		}
-	}
 
+	// スナップショットを先に保存する (zone と同じく Save 失敗時の再通知を防ぐ)。
 	if err := s.Save(data); err != nil {
 		return fmt.Errorf("save root anchors: %w", err)
 	}
 
+	if len(changes) == 0 {
+		fmt.Println("no anchor changes detected")
+		return nil
+	}
+	fmt.Printf("detected %d anchor changes\n", len(changes))
+	// 初回実行 (前回スナップショットなし) は全キーが added になるため履歴には残さない。
+	if !hadPrevious {
+		return nil
+	}
+	if substantive := diff.Substantive(changes); len(substantive) == 0 {
+		fmt.Println("anchor changes are all mechanical; skipping notification")
+	} else {
+		fmt.Printf("%d substantive anchor changes\n", len(substantive))
+		notifiers := buildNotifiers(cfg, configPath)
+		for _, n := range notifiers {
+			if err := n.NotifyAnchors(ctx, substantive); err != nil {
+				fmt.Fprintf(os.Stderr, "notify %s (anchors) failed: %v\n", n.Name(), err)
+			}
+		}
+	}
+	oldSerial := anchor.Serial(oldTA)
+	newSerial := anchor.Serial(ta)
+	h := store.NewAnchorHistory(cfg.DataDir)
+	entry := store.NewEntry(time.Now().UTC(), oldSerial, newSerial, changes)
+	if err := h.Append(entry); err != nil {
+		fmt.Fprintf(os.Stderr, "record anchor history failed: %v\n", err)
+	}
 	return nil
 }
 
@@ -389,47 +403,49 @@ func runTLDOnce(ctx context.Context, cfg config.Config, configPath string) error
 	changes := tld.Diff(oldList, list)
 	diff.SortChanges(changes)
 	span.SetAttributes(attribute.Int("tld.changes", len(changes)))
-	if len(changes) == 0 {
-		fmt.Println("no TLD changes detected")
-	} else {
-		fmt.Printf("detected %d TLD changes\n", len(changes))
-		// TLD 擬似レコードは mechanicalSpecs (RRSIG / SOA / ZONEMD) の対象外なので、
-		// 検出した差分は常に substantive になる。zone / anchors と同じ判定を通す
-		// ための防御的コードで、次の「機械的変更のみ」分岐には現状到達しない。
-		if substantive := diff.Substantive(changes); len(substantive) == 0 {
-			fmt.Println("TLD changes are all mechanical; skipping notification")
-		} else if hadPrevious {
-			fmt.Printf("%d substantive TLD changes\n", len(substantive))
-			notifiers := buildNotifiers(cfg, configPath)
-			// WHOIS のリプライは X / BlueSky のみ対応している。config の
-			// enabled フラグではなく、実際に構成された notifier で判定する
-			// (認証情報不足で notifier が作られない場合に無駄な問い合わせをしない)。
-			var infos map[string]whois.Info
-			if needsTLDWhois(notifiers) {
-				infos = lookupTLDWhois(ctx, substantive, whois.Lookup)
-			}
-			for _, n := range notifiers {
-				if err := n.NotifyTLDs(ctx, substantive, infos); err != nil {
-					fmt.Fprintf(os.Stderr, "notify %s (TLDs) failed: %v\n", n.Name(), err)
-				}
-			}
-		}
-		// 初回実行 (前回スナップショットなし) は全 TLD が added になるため履歴には残さない。
-		if hadPrevious {
-			oldSerial := tld.Serial(oldList)
-			newSerial := tld.Serial(list)
-			h := store.NewTLDHistory(cfg.DataDir)
-			entry := store.NewEntry(time.Now().UTC(), oldSerial, newSerial, changes)
-			if err := h.Append(entry); err != nil {
-				fmt.Fprintf(os.Stderr, "record TLD history failed: %v\n", err)
-			}
-		}
-	}
 
+	// スナップショットを先に保存する (zone と同じく Save 失敗時の再通知を防ぐ)。
 	if err := s.Save(data); err != nil {
 		return fmt.Errorf("save TLD list: %w", err)
 	}
 
+	if len(changes) == 0 {
+		fmt.Println("no TLD changes detected")
+		return nil
+	}
+	fmt.Printf("detected %d TLD changes\n", len(changes))
+	// 初回実行 (前回スナップショットなし) は全 TLD が added になるため履歴には残さない。
+	if !hadPrevious {
+		return nil
+	}
+	// TLD 擬似レコードは mechanicalSpecs (RRSIG / SOA / ZONEMD) の対象外なので、
+	// 検出した差分は常に substantive になる。zone / anchors と同じ判定を通す
+	// ための防御的コードで、次の「機械的変更のみ」分岐には現状到達しない。
+	if substantive := diff.Substantive(changes); len(substantive) == 0 {
+		fmt.Println("TLD changes are all mechanical; skipping notification")
+	} else {
+		fmt.Printf("%d substantive TLD changes\n", len(substantive))
+		notifiers := buildNotifiers(cfg, configPath)
+		// WHOIS のリプライは X / BlueSky のみ対応している。config の
+		// enabled フラグではなく、実際に構成された notifier で判定する
+		// (認証情報不足で notifier が作られない場合に無駄な問い合わせをしない)。
+		var infos map[string]whois.Info
+		if needsTLDWhois(notifiers) {
+			infos = lookupTLDWhois(ctx, substantive, whois.Lookup)
+		}
+		for _, n := range notifiers {
+			if err := n.NotifyTLDs(ctx, substantive, infos); err != nil {
+				fmt.Fprintf(os.Stderr, "notify %s (TLDs) failed: %v\n", n.Name(), err)
+			}
+		}
+	}
+	oldSerial := tld.Serial(oldList)
+	newSerial := tld.Serial(list)
+	h := store.NewTLDHistory(cfg.DataDir)
+	entry := store.NewEntry(time.Now().UTC(), oldSerial, newSerial, changes)
+	if err := h.Append(entry); err != nil {
+		fmt.Fprintf(os.Stderr, "record TLD history failed: %v\n", err)
+	}
 	return nil
 }
 

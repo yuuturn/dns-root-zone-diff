@@ -31,7 +31,8 @@ pre-commit install
 
 ## Configuration
 
-Create a `config.yaml` file:
+Copy [`config.yaml.example`](config.yaml.example) to `config.yaml` and fill in secrets.
+A minimal example:
 
 ```yaml
 zone_url: "https://www.internic.net/domain/root.zone"
@@ -46,10 +47,17 @@ slack:
   webhook_url: ""
 twitter:
   enabled: false
+  # OAuth 1.0a (legacy). Prefer OAuth 2.0 for production.
   api_key: ""
   api_secret: ""
   access_token: ""
   access_secret: ""
+  # OAuth 2.0 user access token (recommended). Tokens expire in ~2h and are
+  # refreshed automatically; updated tokens are written back to this file.
+  oauth2_access_token: ""
+  oauth2_refresh_token: ""
+  oauth2_client_id: ""
+  oauth2_client_secret: ""
   # Maximum number of tweets posted in a single detection (defaults to 6)
   max_posts: 6
 web:
@@ -63,6 +71,8 @@ bluesky:
   max_post_chars: 300
 ```
 
+Credentials in the config (or env) auto-enable the corresponding notifier even when `enabled: false` is set; set credentials empty to disable.
+
 Overridable via environment variables:
 
 - `DNS_ROOT_DIFF_ZONE_URL`
@@ -75,12 +85,17 @@ Overridable via environment variables:
 - `TWITTER_API_SECRET`
 - `TWITTER_ACCESS_TOKEN`
 - `TWITTER_ACCESS_SECRET`
+- `TWITTER_OAUTH2_ACCESS_TOKEN`
+- `TWITTER_OAUTH2_REFRESH_TOKEN`
+- `TWITTER_OAUTH2_CLIENT_ID`
+- `TWITTER_OAUTH2_CLIENT_SECRET`
 - `TWITTER_MAX_POSTS`
 - `DNS_ROOT_DIFF_WEB_ENABLED`
 - `DNS_ROOT_DIFF_WEB_LISTEN`
 - `BLUESKY_HANDLE`
 - `BLUESKY_APP_PASSWORD`
 - `BLUESKY_API_URL`
+- `BLUESKY_ENABLED`
 - `BLUESKY_MAX_POST_CHARS`
 
 ## Change Categories and Notification Content
@@ -97,7 +112,7 @@ Detected changes are categorized by RR type.
 | `TLD` | TLD (pseudo RR type used by TLD list monitoring) |
 | `other` | anything else |
 
-The root zone is re-signed every 12 hours, at which point about 2,800 RRSIG records are replaced and the SOA serial and ZONEMD serial/digest are also updated. Runs that consist **only** of this **mechanical change** (over 5,000 diffs) are **not notified to Slack/X**. The full history is retained in the Web UI.
+The root zone is re-signed every 12 hours, at which point about 2,800 RRSIG records are replaced and the SOA serial and ZONEMD serial/digest are also updated. Runs that consist **only** of this **mechanical change** (paired RRSIG / SOA / ZONEMD updates with no unpaired substantive diffs) are **not notified to Slack / X / BlueSky**. The full history is retained in the Web UI.
 
 The first run (no previous snapshot) only saves a baseline snapshot; no notification or history is recorded, since every record would otherwise be reported as added.
 
@@ -298,8 +313,17 @@ make lint
 
 ## Deploying to a VPS
 
+Before the first deploy, on the VPS:
+
+1. Create the `dns-root-diff` user/group and install [`deploy/dns-root-diff.service`](deploy/dns-root-diff.service) under `/etc/systemd/system/`.
+2. Place `config.yaml` at `/etc/dns-root-diff/config.yaml` (readable/writable by that user; OAuth 2.0 token refresh writes back to this file).
+3. Set `data_dir: "/var/lib/dns-root-diff"` so it matches systemd `StateDirectory=dns-root-diff`.
+4. Optionally configure nginx using [`deploy/nginx.conf.example`](deploy/nginx.conf.example).
+
+Then from a development machine (macOS arm64 cross-compiles to linux/amd64):
+
 ```bash
 make deploy
 ```
 
-Before deploying, create a dedicated user and data directory on the VPS, and place `config.yaml` there.
+`make deploy` runs [`deploy/deploy.sh`](deploy/deploy.sh) (cross-compile, scp, `restorecon` when available, `daemon-reload`, restart, status).

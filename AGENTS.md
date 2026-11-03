@@ -1,8 +1,8 @@
 # dns-root-diff
 
-DNS root zone file change notification ツール。
+DNS root zone / root anchors / TLD リストの変更通知ツール。
 
-https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2時間に一度取得し、前回との差分を検出して、Slack、X (Twitter)、または BlueSky に通知する。
+https://www.internic.net/domain/root.zone ・ root anchors ・ IANA TLD リストを 2時間に一度取得し、前回との差分を検出して、Slack、X (Twitter)、または BlueSky に通知する。差分履歴は Web UI でも閲覧できる。
 
 ## コミュニケーション
 
@@ -34,7 +34,8 @@ https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2
 - `internal/dnssec`: DNSKEY RDATA の表示用情報 (key tag = RFC 4034 Appendix B、ロール = SEP ビット、鍵長 = RFC 3110 / ECDSA / EdDSA) の算出。通知 (`internal/notify`) と履歴 (`internal/store` 経由で Web API) の双方が使う
 - `internal/store`: ローカルディスクへのスナップショット保存 (root.zone / root-anchors.xml / tlds-alpha-by-domain.txt) + diff 履歴の JSON 永続化 (`data_dir/diffs/` = zone、`data_dir/anchor-diffs/` = root anchors、`data_dir/tld-diffs/` = TLD リスト)
 - `internal/notify`: Notifier インターフェース (Notify=zone / NotifyAnchors=root anchors / NotifyTLDs=TLD リスト)、Slack Webhook、X API v2 (OAuth 2.0 ユーザートークン)、BlueSky (AT Protocol)。TLD 通知では X / BlueSky が WHOIS 情報をリプライとして追記する (Slack は対象外)
-- `internal/config`: YAML 設定 + 環境変数オーバーライド (`anchor_url` / `tld_url` は空なら該当監視を無効化)
+- `internal/config`: YAML 設定 + 環境変数オーバーライド (`anchor_url` / `tld_url` は空なら該当監視を無効化)。サンプルはリポジトリ直下の `config.yaml.example`
+- `internal/telemetry`: OpenTelemetry トレース (OTEL_EXPORTER_OTLP_ENDPOINT 未設定なら no-op)
 - `internal/web`: diff 履歴閲覧の HTTP API (`/api/diffs` = zone、`/api/anchors/diffs` = root anchors、`/api/tlds/diffs` = TLD リスト) + 静的配信 (フロントエンドを go:embed)
 - `web/frontend/`: Web UI (Vite + React + @cloudflare/kumo)。Root Zone / Root Anchors / TLDs のタブで履歴を分離表示。ビルド成果物は `internal/web/static/` にコミットする
 - `deploy/`: systemd unit、デプロイシェル、nginx リバースプロキシ設定例
@@ -52,8 +53,8 @@ https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2
 ## フロントエンド開発フロー
 
 - `web/frontend/` を変更したら `make frontend-build` を実行し、出力された `internal/web/static/` を**変更と同じコミットに含める**。
-- CI はフロントエンドを再ビルドして `git diff --exit-code internal/web/static` で一致を検証するため、ビルド忘れがあると CI が落ちる。
-- dependabot が切ったブランチ (`dependabot/**`) の PR では、`frontend-artifacts` ワークフローがビルド成果物を自動コミット・push して CI を再実行するため、手動での成果物更新は不要 (Actions シークレット `FRONTEND_ARTIFACTS_PAT` が必要)。
+- CI はフロントエンドを再ビルドし、`git status --porcelain internal/web/static` で成果物の一致を検証するため、ビルド忘れがあると CI が落ちる。
+- dependabot (`.github/dependabot.yml`) が切ったブランチ (`dependabot/**`) の PR では、`frontend-artifacts` ワークフローがビルド成果物を自動コミット・push して CI を再実行するため、手動での成果物更新は不要 (Actions シークレット `FRONTEND_ARTIFACTS_PAT` が必要)。
 - 通常の Go ビルド・デプロイには Node.js は不要 (成果物コミット済みのため)。
 - kumo の standalone CSS には任意の Tailwind ユーティリティが含まれない。レイアウト用クラスは `web/frontend/src/app.css` に定義する。
 
@@ -62,6 +63,8 @@ https://www.internic.net/domain/root.zone から DNS root zone ファイルを 2
 ```bash
 make deploy
 ```
+
+`make deploy` は `deploy/deploy.sh` を呼ぶ (Makefile 内に重複ロジックを持たない)。
 
 VPS では事前に `/etc/dns-root-diff/config.yaml` を配置し、`dns-root-diff` ユーザーが読み取れる必要がある。
 

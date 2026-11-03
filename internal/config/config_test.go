@@ -446,6 +446,34 @@ func TestTwitterMaxPostsEnvOverride(t *testing.T) {
 	}
 }
 
+func TestBlueskyMaxPostCharsDefaulted(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    int
+	}{
+		{"default when omitted", "bluesky:\n  handle: x\n", defaultBlueskyMaxPostChars},
+		{"from file", "bluesky:\n  max_post_chars: 500\n", 500},
+		{"zero is defaulted", "bluesky:\n  max_post_chars: 0\n", defaultBlueskyMaxPostChars},
+		{"negative is defaulted", "bluesky:\n  max_post_chars: -1\n", defaultBlueskyMaxPostChars},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tt.content), 0644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.Bluesky.MaxPostChars != tt.want {
+				t.Errorf("Bluesky.MaxPostChars = %d, want %d", cfg.Bluesky.MaxPostChars, tt.want)
+			}
+		})
+	}
+}
+
 func TestWebEnvOverride(t *testing.T) {
 	t.Setenv("DNS_ROOT_DIFF_WEB_ENABLED", "true")
 	t.Setenv("DNS_ROOT_DIFF_WEB_LISTEN", "127.0.0.1:3000")

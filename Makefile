@@ -41,6 +41,6 @@ frontend-build:
 frontend-check:
 	cd $(FRONTEND_DIR) && npm run typecheck
 
-deploy: build-linux
-	scp bin/$(BINARY)-linux-amd64 $(VPS):/tmp/$(BINARY)
-	ssh $(VPS) "sudo install -o root -g root -m 755 /tmp/$(BINARY) /usr/local/bin/$(BINARY) && rm /tmp/$(BINARY) && sudo systemctl restart $(BINARY)"
+# deploy.sh がクロスコンパイル・scp・restorecon・daemon-reload・restart を行う。
+deploy:
+	./deploy/deploy.sh
