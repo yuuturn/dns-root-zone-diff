@@ -29,6 +29,17 @@ brew install go golangci-lint pre-commit gh
 pre-commit install
 ```
 
+Go / golangci-lint / gitleaks は [mise](https://mise.jdx.dev/) でも管理できる。
+バージョンはリポジトリ直下の [`mise.toml`](mise.toml) で固定しており、CI と同じ組み合わせになる:
+
+```bash
+mise install
+# リポジトリ外でも go を使う場合
+mise use -g go@1.26.5
+```
+
+`pre-commit` は mise の管理対象外なので、上記の `brew install` などで別途導入する。
+
 ## 設定
 
 [`config.yaml.example`](config.yaml.example) を `config.yaml` にコピーして秘密情報を埋める。

@@ -1,0 +1,6 @@
+# mise でツールチェーンのバージョンを固定する。
+# バージョンは AGENTS.md / CI (.github/workflows/ci.yml) と揃えること。
+[tools]
+go = "1.26.5"
+golangci-lint = "2.12.2"
+gitleaks = "8.30.1"

@@ -29,6 +29,17 @@ brew install go golangci-lint pre-commit gh
 pre-commit install
 ```
 
+Go / golangci-lint / gitleaks can also be managed with [mise](https://mise.jdx.dev/).
+Their versions are pinned in [`mise.toml`](mise.toml) at the repository root, matching CI:
+
+```bash
+mise install
+# To make go available outside the repository as well
+mise use -g go@1.26.5
+```
+
+`pre-commit` is not covered by mise; install it separately (for example with the `brew install` above).
+
 ## Configuration
 
 Copy [`config.yaml.example`](config.yaml.example) to `config.yaml` and fill in secrets.

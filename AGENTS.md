@@ -12,6 +12,7 @@ https://www.internic.net/domain/root.zone ・ root anchors ・ IANA TLD リス�
 
 - 言語: Go
 - バージョン: 1.26.5
+- ツールチェーン: `mise.toml` で Go 1.26.5 / golangci-lint 2.12.2 / gitleaks 8.30.1 を固定 (CI のバージョンと揃える)。`mise install` で導入する
 - リモートリポジトリ: GitHub (https://github.com/yuuturn/dns-root-zone-diff)
 - Go module: `github.com/yfujii/dns-root-diff` (リポジトリ名 `dns-root-zone-diff` と異なるので注意)
 - デプロイ先: VPS (vps1.osk.skr.yfujii.net, Ubuntu 24.04 LTS, x86_64, systemd 255)
