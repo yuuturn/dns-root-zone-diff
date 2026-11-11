@@ -435,7 +435,9 @@ make lint
 開発マシン (macOS arm64 → linux/amd64 クロスコンパイル) から:
 
 ```bash
+cp deploy/deploy.env.example deploy/deploy.env
+# deploy/deploy.env の VPS を編集する (このファイルは gitignore 済み)
 make deploy
 ```
 
-`make deploy` は [`deploy/deploy.sh`](deploy/deploy.sh) を実行する (クロスコンパイル、scp、利用可能なら `restorecon`、`daemon-reload`、再起動、status 確認)。
+接続先などのデプロイ設定 (`VPS` / `BINARY` / `REMOTE_BIN` / `SERVICE`) はスクリプト外で管理する。[`deploy/deploy.sh`](deploy/deploy.sh) は `deploy/deploy.env` があれば読み込み、同名の環境変数が設定されていればそちらを優先する (例: `VPS=other-host make deploy`)。`VPS` は必須で、未設定ならエラー終了する。`make deploy` は [`deploy/deploy.sh`](deploy/deploy.sh) を実行する (クロスコンパイル、scp、利用可能なら `restorecon`、`daemon-reload`、再起動、status 確認)。

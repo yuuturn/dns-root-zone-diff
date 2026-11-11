@@ -41,5 +41,6 @@ frontend-check:
 	cd $(FRONTEND_DIR) && npm run typecheck
 
 # deploy.sh がクロスコンパイル・scp・restorecon・daemon-reload・restart を行う。
+# 接続先は deploy/deploy.env (gitignore 済み) か環境変数で指定する。
 deploy:
 	./deploy/deploy.sh
