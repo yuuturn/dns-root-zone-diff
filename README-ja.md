@@ -436,8 +436,8 @@ make lint
 
 ```bash
 cp deploy/deploy.env.example deploy/deploy.env
-# deploy/deploy.env の VPS を編集する (このファイルは gitignore 済み)
+# deploy/deploy.env の DEPLOY_HOST を編集する (このファイルは gitignore 済み)
 make deploy
 ```
 
-接続先などのデプロイ設定 (`VPS` / `BINARY` / `REMOTE_BIN` / `SERVICE`) はスクリプト外で管理する。[`deploy/deploy.sh`](deploy/deploy.sh) は `deploy/deploy.env` があれば読み込み、同名の環境変数が設定されていればそちらを優先する (例: `VPS=other-host make deploy`)。`VPS` は必須で、未設定ならエラー終了する。`make deploy` は [`deploy/deploy.sh`](deploy/deploy.sh) を実行する (クロスコンパイル、scp、利用可能なら `restorecon`、`daemon-reload`、再起動、status 確認)。
+接続先などのデプロイ設定 (`DEPLOY_HOST` / `BINARY` / `REMOTE_BIN` / `SERVICE`) はスクリプト外で管理する。[`deploy/deploy.sh`](deploy/deploy.sh) は `deploy/deploy.env` があれば読み込み、同名の環境変数が設定されていればそちらを優先する (例: `DEPLOY_HOST=other-host make deploy`)。`DEPLOY_HOST` は必須で、未設定ならエラー終了する。`make deploy` は [`deploy/deploy.sh`](deploy/deploy.sh) を実行する (クロスコンパイル、scp、利用可能なら `restorecon`、`daemon-reload`、再起動、status 確認)。

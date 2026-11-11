@@ -382,8 +382,8 @@ Then from a development machine (macOS arm64 cross-compiles to linux/amd64):
 
 ```bash
 cp deploy/deploy.env.example deploy/deploy.env
-# edit VPS in deploy/deploy.env (this file is gitignored)
+# edit DEPLOY_HOST in deploy/deploy.env (this file is gitignored)
 make deploy
 ```
 
-Deploy settings (`VPS`, `BINARY`, `REMOTE_BIN`, `SERVICE`) live outside the script. [`deploy/deploy.sh`](deploy/deploy.sh) loads `deploy/deploy.env` when it exists, and environment variables take precedence (for example `VPS=other-host make deploy`). `VPS` is required, so the script exits with an error when it is unset. `make deploy` runs [`deploy/deploy.sh`](deploy/deploy.sh) (cross-compile, scp, `restorecon` when available, `daemon-reload`, restart, status).
+Deploy settings (`DEPLOY_HOST`, `BINARY`, `REMOTE_BIN`, `SERVICE`) live outside the script. [`deploy/deploy.sh`](deploy/deploy.sh) loads `deploy/deploy.env` when it exists, and environment variables take precedence (for example `DEPLOY_HOST=other-host make deploy`). `DEPLOY_HOST` is required, so the script exits with an error when it is unset. `make deploy` runs [`deploy/deploy.sh`](deploy/deploy.sh) (cross-compile, scp, `restorecon` when available, `daemon-reload`, restart, status).
