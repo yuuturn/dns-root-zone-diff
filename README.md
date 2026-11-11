@@ -22,12 +22,40 @@ A tool that mechanically detects changes to the DNS root zone file and sends not
 - BlueSky: [@dnsrootzonediff.bsky.social](https://bsky.app/profile/dnsrootzonediff.bsky.social) — live change notifications
 - Diff summary (Web UI): <https://dns-root-zone-diff.yfujii.net/>
 
-## Local Installation
+## Development Requirements
+
+| Tool | Purpose | Install |
+|---|---|---|
+| [mise](https://mise.jdx.dev/) | Pins Go / golangci-lint / gitleaks versions | `curl https://mise.run \| sh` (`brew install mise` on macOS) |
+| Go 1.26.5 | Build and test | `mise install` (pinned in [`mise.toml`](mise.toml)) |
+| golangci-lint 2.12.2 / gitleaks 8.30.1 | Lint and secret scanning | `mise install` (same file) |
+| C compiler | Required by `go test -race` (CGO) | macOS: `xcode-select --install` / Ubuntu: `sudo apt install build-essential` |
+| [pre-commit](https://pre-commit.com/) | Commit hooks (gofmt / go vet / go test / golangci-lint / gitleaks) | macOS: `brew install pre-commit` / Ubuntu: `pipx install pre-commit` |
+| Node.js + npm | Only when changing `web/frontend/` | Install any suitable version with mise (CI uses Node 22) |
+| [gh](https://cli.github.com/) (optional) | Creating pull requests | `brew install gh` etc. |
+
+Setup:
 
 ```bash
-brew install go golangci-lint pre-commit gh
-pre-commit install
+mise install        # installs Go / golangci-lint / gitleaks
+pre-commit install  # enables the commit hooks
+# To make go available outside the repository as well
+mise use -g go@1.26.5
 ```
+
+`pre-commit` is Python-based and not managed by mise, so install it with the method for your OS.
+
+`make test` runs `go test -race -cover ./...`, so a working C compiler with CGO enabled is
+required (Xcode Command Line Tools on macOS, build-essential on Ubuntu).
+
+If you change the frontend, install Node.js and run:
+
+```bash
+make frontend-install  # first time only
+make frontend-build    # writes to internal/web/static
+```
+
+`make ci` runs the same checks as CI locally (gitleaks / vet / lint / test / build).
 
 ## Configuration
 

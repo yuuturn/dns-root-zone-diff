@@ -22,12 +22,40 @@ DNS root zone の変更を機械的に検知して通知するツール。
 - BlueSky: [@dnsrootzonediff.bsky.social](https://bsky.app/profile/dnsrootzonediff.bsky.social) — 実際の変更通知
 - diff まとめページ (Web UI): <https://dns-root-zone-diff.yfujii.net/>
 
-## ローカルインストール
+## 開発に必要なもの
+
+| ツール | 用途 | 導入方法 |
+|---|---|---|
+| [mise](https://mise.jdx.dev/) | Go / golangci-lint / gitleaks のバージョン管理 | `curl https://mise.run \| sh` (macOS は `brew install mise`) |
+| Go 1.26.5 | ビルド・テスト | `mise install` ([`mise.toml`](mise.toml) で固定) |
+| golangci-lint 2.12.2 / gitleaks 8.30.1 | lint / シークレットスキャン | `mise install` (同上) |
+| C コンパイラ | `go test -race` (CGO) に必要 | macOS: `xcode-select --install` / Ubuntu: `sudo apt install build-essential` |
+| [pre-commit](https://pre-commit.com/) | コミット時のフック (gofmt / go vet / go test / golangci-lint / gitleaks) | macOS: `brew install pre-commit` / Ubuntu: `pipx install pre-commit` など |
+| Node.js + npm | `web/frontend/` を変更するときのみ | mise などで任意のバージョンを導入 (CI は Node 22) |
+| [gh](https://cli.github.com/) (任意) | PR の作成 | `brew install gh` など |
+
+セットアップ:
 
 ```bash
-brew install go golangci-lint pre-commit gh
-pre-commit install
+mise install        # Go / golangci-lint / gitleaks を導入
+pre-commit install  # コミットフックを有効化
+# リポジトリ外でも go を使う場合
+mise use -g go@1.26.5
 ```
+
+`pre-commit` は Python 製で mise の管理対象外のため、OS ごとの方法で別途導入する。
+
+`make test` は `go test -race -cover ./...` を実行するため、CGO が有効な C コンパイラが
+必要になる (macOS は Xcode Command Line Tools、Ubuntu は build-essential)。
+
+フロントエンドを変更する場合は Node.js も導入し、以下を実行する:
+
+```bash
+make frontend-install  # 初回のみ
+make frontend-build    # internal/web/static に出力される
+```
+
+CI と同じチェックをまとめて実行する場合は `make ci` (gitleaks / vet / lint / test / build)。
 
 ## 設定
 
