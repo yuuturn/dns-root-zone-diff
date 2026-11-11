@@ -36,6 +36,7 @@ bin/
 /dns-root-diff
 data/
 config.yaml
+deploy/deploy.env
 .DS_Store
 .idea/
 .vscode/
