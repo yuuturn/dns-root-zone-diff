@@ -54,6 +54,12 @@ export function App() {
         >
           TLDs
         </NavLink>
+        <NavLink
+          to="/tld-history"
+          className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+        >
+          TLD History
+        </NavLink>
       </nav>
       <Outlet />
     </div>

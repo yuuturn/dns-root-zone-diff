@@ -14,7 +14,7 @@ DNS root zone の変更を機械的に検知して通知するツール。
 - 再署名ノイズを除いた実質的な変更をサマリーにして Slack Webhook へ通知
 - 同じサマリーを X (Twitter) API v2 へ 280文字ごとに分割して連投
 - 同じサマリーを BlueSky (AT Protocol) へ 300文字ごとに分割して投稿
-- diff 履歴を Web UI で閲覧 (Cloudflare [kumo](https://github.com/cloudflare/kumo) 製、Root Zone / Root Anchors / TLDs のタブで分離)。ヘッダーに dark / light 切替スイッチと GitHub リポジトリへのリンク
+- diff 履歴を Web UI で閲覧 (Cloudflare [kumo](https://github.com/cloudflare/kumo) 製、Root Zone / Root Anchors / TLDs / TLD History のタブで分離)。TLD History では root zone の diff を TLD ごとの時系列で追える。ヘッダーに dark / light 切替スイッチと GitHub リポジトリへのリンク
 
 ## 運用中
 
@@ -22,12 +22,40 @@ DNS root zone の変更を機械的に検知して通知するツール。
 - BlueSky: [@dnsrootzonediff.bsky.social](https://bsky.app/profile/dnsrootzonediff.bsky.social) — 実際の変更通知
 - diff まとめページ (Web UI): <https://dns-root-zone-diff.yfujii.net/>
 
-## ローカルインストール
+## 開発に必要なもの
+
+| ツール | 用途 | 導入方法 |
+|---|---|---|
+| [mise](https://mise.jdx.dev/) | Go / golangci-lint / gitleaks のバージョン管理 | `curl https://mise.run \| sh` (macOS は `brew install mise`) |
+| Go 1.26.5 | ビルド・テスト | `mise install` ([`mise.toml`](mise.toml) で固定) |
+| golangci-lint 2.12.2 / gitleaks 8.30.1 | lint / シークレットスキャン | `mise install` (同上) |
+| C コンパイラ | `go test -race` (CGO) に必要 | macOS: `xcode-select --install` / Ubuntu: `sudo apt install build-essential` |
+| [pre-commit](https://pre-commit.com/) | コミット時のフック (gofmt / go vet / go test / golangci-lint / gitleaks) | macOS: `brew install pre-commit` / Ubuntu: `pipx install pre-commit` など |
+| Node.js + npm | `web/frontend/` を変更するときのみ | mise などで任意のバージョンを導入 (CI は Node 22) |
+| [gh](https://cli.github.com/) (任意) | PR の作成 | `brew install gh` など |
+
+セットアップ:
 
 ```bash
-brew install go golangci-lint pre-commit gh
-pre-commit install
+mise install        # Go / golangci-lint / gitleaks を導入
+pre-commit install  # コミットフックを有効化
+# リポジトリ外でも go を使う場合
+mise use -g go@1.26.5
 ```
+
+`pre-commit` は Python 製で mise の管理対象外のため、OS ごとの方法で別途導入する。
+
+`make test` は `go test -race -cover ./...` を実行するため、CGO が有効な C コンパイラが
+必要になる (macOS は Xcode Command Line Tools、Ubuntu は build-essential)。
+
+フロントエンドを変更する場合は Node.js も導入し、以下を実行する:
+
+```bash
+make frontend-install  # 初回のみ
+make frontend-build    # internal/web/static に出力される
+```
+
+CI と同じチェックをまとめて実行する場合は `make ci` (gitleaks / vet / lint / test / build)。
 
 ## 設定
 
@@ -282,6 +310,21 @@ changed:      2026-10-28
 source:       IANA
 ```
 
+## TLD 別履歴 (TLD History)
+
+root zone の diff 履歴を TLD 単位に集約し、Web UI の **TLD History** タブで
+TLD ごとの変更を時系列で閲覧できる。IANA TLD リストの監視 (TLDs タブ) とは別の機能。
+
+- 変更履歴を持つ TLD を、最終変更が新しい順に一覧表示する。検索ボックスから
+  履歴の有無にかかわらず任意の TLD を開ける
+- 各 TLD の履歴には、TLD 直下のレコード (`example.` の NS / DS / DNSKEY など) と、
+  配下の glue (`ns1.example.` の A / AAAA など) を含める
+- RRSIG の再署名 (category=signature) は TLD の実質的な変更ではないため除外する
+- 初回は既存の `data_dir/diffs/` を走査してバックフィルし、結果を
+  `data_dir/tld-history/index.json` にキャッシュする。以降は追加された diff だけを
+  取り込むため、履歴が増えても表示は高速
+- 履歴の各イベントから、対応する root zone の diff 詳細 (`/diffs/<id>`) へ移動できる
+
 ## 実行
 
 ```bash
@@ -298,15 +341,18 @@ make build
 `web.enabled: true` にすると定期実行モード時に diff 履歴を閲覧できる Web サーバーが起動する
 (`-once` では起動しない)。履歴は変更検知のたびに JSON として保存される
 (zone は `data_dir/diffs/`、root anchors は `data_dir/anchor-diffs/`、TLD リストは
-`data_dir/tld-diffs/`)。
+`data_dir/tld-diffs/`)。TLD History は `data_dir/diffs/` から遅延構築され、
+`data_dir/tld-history/index.json` にキャッシュされる。
 
-- `GET /` : 一覧・詳細画面 (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))。Root Zone / Root Anchors / TLDs のタブで切り替え。ヘッダーの月/太陽スイッチで dark / light を切り替えられ、選択は localStorage に保存される (未選択時は OS の設定に追従)。ヘッダーの "View on GitHub" はリポジトリへのリンク。カテゴリタブは URL のフラグメントでパーマリンク化されており、`/diffs/<id>#DNSSEC` で DNSSEC の絞り込みを直接開ける。狭い画面では diff テーブルを横スクロールして列の切れを防ぐ
+- `GET /` : 一覧・詳細画面 (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo))。Root Zone / Root Anchors / TLDs / TLD History のタブで切り替え。ヘッダーの月/太陽スイッチで dark / light を切り替えられ、選択は localStorage に保存される (未選択時は OS の設定に追従)。ヘッダーの "View on GitHub" はリポジトリへのリンク。カテゴリタブは URL のフラグメントでパーマリンク化されており、`/diffs/<id>#DNSSEC` で DNSSEC の絞り込みを直接開ける。狭い画面では diff テーブルを横スクロールして列の切れを防ぐ
 - `GET /api/diffs?page=1&per_page=20` : root zone の diff 履歴一覧
 - `GET /api/diffs/{id}` : root zone の diff 詳細。オプションで `category=<名前>` でカテゴリ絞り込み、`page` / `per_page` (既定 100、上限 100) で changes をページングできる。ページング時は応答に `changes_total` / `total_pages` が追加される。DNSKEY / CDNSKEY の変更には `old_key` / `new_key` (`tag` / `role` / `size`) が付き、画面では通知と同じ注記として表示される
 - `GET /api/anchors/diffs?page=1&per_page=20` : root anchors の diff 履歴一覧
 - `GET /api/anchors/diffs/{id}` : root anchors の diff 詳細 (上記と同じオプション付き)
 - `GET /api/tlds/diffs?page=1&per_page=20` : TLD リストの diff 履歴一覧
 - `GET /api/tlds/diffs/{id}` : TLD リストの diff 詳細 (上記と同じオプション付き)
+- `GET /api/tld-history?page=1&per_page=20` : TLD 別履歴の一覧 (変更履歴を持つ TLD を最終変更が新しい順で返す)
+- `GET /api/tld-history/{tld}?page=1&per_page=20` : 特定 TLD の履歴。検知イベントを新しい順に返し、各イベントにその TLD に関係する changes を含む。`stats` はページに関係なく全イベント分の集計。RRSIG の再署名は含まない。履歴が無い TLD は空の `events` を返す
 - `GET /api/health` : 死活監視
 
 一覧・詳細 API は `ETag` を返し、一致する `If-None-Match` 付きリクエストには `304 Not Modified` で応答する。

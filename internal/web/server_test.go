@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yfujii/dns-root-diff/internal/store"
+	"github.com/yfujii/dns-root-diff/internal/tldhistory"
 )
 
 // mockHistory は HistoryReader のテスト用実装。
@@ -72,13 +73,35 @@ func newTestServerWithAnchors(entries, anchorEntries []store.Entry) *httptest.Se
 }
 
 func newTestServerWithAll(entries, anchorEntries, tldEntries []store.Entry) *httptest.Server {
+	return newTestServerWithTLDZone(entries, anchorEntries, tldEntries, &mockTLDHistory{})
+}
+
+func newTestServerWithTLDZone(entries, anchorEntries, tldEntries []store.Entry, tldZone TLDHistoryReader) *httptest.Server {
 	s := New(
 		&mockHistory{entries: entries},
 		&mockHistory{entries: anchorEntries},
 		&mockHistory{entries: tldEntries},
+		tldZone,
 		testStatic(),
 	)
 	return httptest.NewServer(s.Handler())
+}
+
+// mockTLDHistory は TLDHistoryReader のテスト用実装。
+type mockTLDHistory struct {
+	summaries []tldhistory.Summary
+	details   map[string]tldhistory.Detail
+}
+
+func (m *mockTLDHistory) List() ([]tldhistory.Summary, error) {
+	return m.summaries, nil
+}
+
+func (m *mockTLDHistory) Get(tld string) (tldhistory.Detail, error) {
+	if d, ok := m.details[tld]; ok {
+		return d, nil
+	}
+	return tldhistory.Detail{TLD: tld}, nil
 }
 
 func getJSON(t *testing.T, url string, wantStatus int) map[string]any {
@@ -647,5 +670,202 @@ func TestGetDiffIncludesDNSKEYKeyInfo(t *testing.T) {
 	// 鍵情報を持たない側は省略される。
 	if _, ok := c["new_key"]; ok {
 		t.Errorf("changes[0].new_key = %v, want omitted", c["new_key"])
+	}
+}
+
+func testTLDHistory() *mockTLDHistory {
+	first := time.Date(2026, 7, 1, 6, 0, 0, 0, time.UTC)
+	second := time.Date(2026, 7, 2, 6, 0, 0, 0, time.UTC)
+	return &mockTLDHistory{
+		summaries: []tldhistory.Summary{
+			{
+				TLD:             "example",
+				FirstDetectedAt: first,
+				LastDetectedAt:  second,
+				Events:          2,
+				Changes:         3,
+				ByCategory:      map[string]int{"delegation": 2, "glue": 1},
+			},
+			{
+				TLD:             "com",
+				FirstDetectedAt: first,
+				LastDetectedAt:  first,
+				Events:          1,
+				Changes:         1,
+				ByCategory:      map[string]int{"delegation": 1},
+			},
+		},
+		details: map[string]tldhistory.Detail{
+			"example": {
+				TLD: "example",
+				Events: []tldhistory.Event{
+					{
+						ID:         "20260702T060000Z-2026070200",
+						DetectedAt: second,
+						OldSerial:  "2026070100",
+						NewSerial:  "2026070200",
+						Summary:    store.Summary{Total: 2, Added: 2, ByCategory: map[string]int{"delegation": 1, "glue": 1}},
+						Changes: []store.ChangeJSON{
+							{Kind: "added", Category: "delegation", Name: "example.", Type: "NS", NewTTL: u32ptr(172800), NewRData: "a.nic.example."},
+							{Kind: "added", Category: "glue", Name: "ns1.example.", Type: "A", NewTTL: u32ptr(172800), NewRData: "192.0.2.1"},
+						},
+					},
+					{
+						ID:         "20260701T060000Z-2026070100",
+						DetectedAt: first,
+						OldSerial:  "2026063000",
+						NewSerial:  "2026070100",
+						Summary:    store.Summary{Total: 1, Added: 1, ByCategory: map[string]int{"delegation": 1}},
+						Changes: []store.ChangeJSON{
+							{Kind: "added", Category: "delegation", Name: "example.", Type: "NS", NewTTL: u32ptr(172800), NewRData: "b.nic.example."},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestListTLDHistory(t *testing.T) {
+	srv := newTestServerWithTLDZone(nil, nil, nil, testTLDHistory())
+	defer srv.Close()
+
+	body := getJSON(t, srv.URL+"/api/tld-history", http.StatusOK)
+	if body["total"].(float64) != 2 {
+		t.Fatalf("total = %v, want 2", body["total"])
+	}
+	tlds := body["tlds"].([]any)
+	if len(tlds) != 2 {
+		t.Fatalf("len(tlds) = %d, want 2", len(tlds))
+	}
+	first := tlds[0].(map[string]any)
+	if first["tld"] != "example" || first["events"].(float64) != 2 {
+		t.Errorf("tlds[0] = %v", first)
+	}
+	if first["last_detected_at"] != "2026-07-02T06:00:00Z" {
+		t.Errorf("last_detected_at = %v", first["last_detected_at"])
+	}
+	if first["changes"].(float64) != 3 {
+		t.Errorf("changes = %v, want 3", first["changes"])
+	}
+}
+
+func TestListTLDHistoryPagination(t *testing.T) {
+	srv := newTestServerWithTLDZone(nil, nil, nil, testTLDHistory())
+	defer srv.Close()
+
+	body := getJSON(t, srv.URL+"/api/tld-history?page=2&per_page=1", http.StatusOK)
+	if body["total"].(float64) != 2 || body["page"].(float64) != 2 {
+		t.Errorf("total=%v page=%v", body["total"], body["page"])
+	}
+	tlds := body["tlds"].([]any)
+	if len(tlds) != 1 || tlds[0].(map[string]any)["tld"] != "com" {
+		t.Errorf("tlds = %v, want only com", tlds)
+	}
+}
+
+func TestGetTLDHistory(t *testing.T) {
+	srv := newTestServerWithTLDZone(nil, nil, nil, testTLDHistory())
+	defer srv.Close()
+
+	body := getJSON(t, srv.URL+"/api/tld-history/EXAMPLE", http.StatusOK)
+	if body["tld"] != "example" {
+		t.Errorf("tld = %v, want example", body["tld"])
+	}
+	if body["total"].(float64) != 2 {
+		t.Errorf("total = %v, want 2", body["total"])
+	}
+	stats := body["stats"].(map[string]any)
+	if stats["events"].(float64) != 2 || stats["changes"].(float64) != 3 {
+		t.Errorf("stats = %v", stats)
+	}
+	if stats["first_detected_at"] != "2026-07-01T06:00:00Z" ||
+		stats["last_detected_at"] != "2026-07-02T06:00:00Z" {
+		t.Errorf("stats times = %v", stats)
+	}
+	events := body["events"].([]any)
+	if len(events) != 2 {
+		t.Fatalf("len(events) = %d, want 2", len(events))
+	}
+	first := events[0].(map[string]any)
+	if first["id"] != "20260702T060000Z-2026070200" {
+		t.Errorf("events[0].id = %v, want newest", first["id"])
+	}
+	changes := first["changes"].([]any)
+	if len(changes) != 2 || changes[0].(map[string]any)["name"] != "example." {
+		t.Errorf("changes = %v", changes)
+	}
+}
+
+func TestGetTLDHistoryEmpty(t *testing.T) {
+	srv := newTestServerWithTLDZone(nil, nil, nil, testTLDHistory())
+	defer srv.Close()
+
+	body := getJSON(t, srv.URL+"/api/tld-history/no-such-tld", http.StatusOK)
+	if body["tld"] != "no-such-tld" {
+		t.Errorf("tld = %v", body["tld"])
+	}
+	if body["total"].(float64) != 0 {
+		t.Errorf("total = %v, want 0", body["total"])
+	}
+	events := body["events"].([]any)
+	if len(events) != 0 {
+		t.Errorf("events = %v, want empty", events)
+	}
+}
+
+func TestGetTLDHistoryInvalid(t *testing.T) {
+	srv := newTestServerWithTLDZone(nil, nil, nil, testTLDHistory())
+	defer srv.Close()
+
+	getJSON(t, srv.URL+"/api/tld-history/bad%20tld", http.StatusBadRequest)
+}
+
+func TestGetTLDHistoryPagination(t *testing.T) {
+	srv := newTestServerWithTLDZone(nil, nil, nil, testTLDHistory())
+	defer srv.Close()
+
+	body := getJSON(t, srv.URL+"/api/tld-history/example?page=2&per_page=1", http.StatusOK)
+	if body["total"].(float64) != 2 {
+		t.Errorf("total = %v, want 2", body["total"])
+	}
+	events := body["events"].([]any)
+	if len(events) != 1 {
+		t.Fatalf("len(events) = %d, want 1", len(events))
+	}
+	if events[0].(map[string]any)["id"] != "20260701T060000Z-2026070100" {
+		t.Errorf("events[0].id = %v", events[0])
+	}
+	// stats はページに関係なく全イベント分を返す。
+	stats := body["stats"].(map[string]any)
+	if stats["events"].(float64) != 2 || stats["changes"].(float64) != 3 {
+		t.Errorf("stats = %v", stats)
+	}
+}
+
+func TestTLDHistoryETag(t *testing.T) {
+	srv := newTestServerWithTLDZone(nil, nil, nil, testTLDHistory())
+	defer srv.Close()
+
+	listURL := srv.URL + "/api/tld-history"
+	etag := getETag(t, listURL)
+	if etag == "" {
+		t.Fatal("list ETag missing")
+	}
+	req, _ := http.NewRequest("GET", listURL, nil)
+	req.Header.Set("If-None-Match", etag)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNotModified {
+		t.Errorf("status with matched ETag = %d, want 304", resp.StatusCode)
+	}
+
+	detail1 := getETag(t, srv.URL+"/api/tld-history/example?page=1&per_page=20")
+	detail2 := getETag(t, srv.URL+"/api/tld-history/example?page=2&per_page=20")
+	if detail1 == detail2 {
+		t.Errorf("detail ETag should differ between pages: %s", detail1)
 	}
 }
