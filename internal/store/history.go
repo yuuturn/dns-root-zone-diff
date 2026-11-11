@@ -33,6 +33,11 @@ var ErrInvalidID = errors.New("invalid history entry id")
 // 目的でも検証する。
 var idPattern = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9A-Za-z-]+$`)
 
+// IsValidID は履歴エントリ ID が保存ファイル名として使える形式かを返す。
+func IsValidID(id string) bool {
+	return idPattern.MatchString(id)
+}
+
 // Entry は1回の変更検知イベントを表す。
 type Entry struct {
 	ID         string       `json:"id"`

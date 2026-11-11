@@ -14,7 +14,7 @@ A tool that mechanically detects changes to the DNS root zone file and sends not
 - Summarizes substantive changes (excluding re-signing noise) and notifies via Slack Webhook
 - Posts the same summary to X (Twitter) API v2, split into chunks of 280 characters
 - Posts the same summary to BlueSky via AT Protocol, split into 300-character posts
-- Browses diff history through a Web UI (built with Cloudflare [kumo](https://github.com/cloudflare/kumo)), separated into Root Zone, Root Anchors, and TLDs tabs. The header carries a dark / light switch and a link to the GitHub repository
+- Browses diff history through a Web UI (built with Cloudflare [kumo](https://github.com/cloudflare/kumo)), separated into Root Zone, Root Anchors, TLDs, and TLD History tabs. TLD History shows the root zone diff as a per-TLD timeline. The header carries a dark / light switch and a link to the GitHub repository
 
 ## Live
 
@@ -235,6 +235,23 @@ changed:      2026-10-28
 source:       IANA
 ```
 
+## TLD History
+
+The Web UI's **TLD History** tab aggregates the root zone diff history by TLD and
+shows each TLD's changes as a timeline. This is separate from IANA TLD list
+monitoring (the TLDs tab).
+
+- Lists the TLDs that have change history, newest change first. The search box
+  opens any TLD, whether or not it has history
+- A TLD's history includes records at its apex (`NS` / `DS` / `DNSKEY` for
+  `example.`) as well as in-bailiwick glue (`A` / `AAAA` for `ns1.example.`)
+- RRSIG re-signing (category=signature) is excluded because it is not a
+  substantive TLD change
+- On first use, existing files under `data_dir/diffs/` are backfilled and cached
+  in `data_dir/tld-history/index.json`. Later runs only ingest newly added diffs,
+  so the view stays fast as history grows
+- Each event links to the corresponding root zone diff detail (`/diffs/<id>`)
+
 ## Usage
 
 ```bash
@@ -248,15 +265,17 @@ make build
 
 ## Web UI
 
-Setting `web.enabled: true` starts a web server that lets you browse diff history in scheduled mode (`-once` does not start it). History is saved as JSON on each detection (zone in `data_dir/diffs/`, root anchors in `data_dir/anchor-diffs/`, TLD list in `data_dir/tld-diffs/`).
+Setting `web.enabled: true` starts a web server that lets you browse diff history in scheduled mode (`-once` does not start it). History is saved as JSON on each detection (zone in `data_dir/diffs/`, root anchors in `data_dir/anchor-diffs/`, TLD list in `data_dir/tld-diffs/`). TLD History is built lazily from `data_dir/diffs/` and cached in `data_dir/tld-history/index.json`.
 
-- `GET /` : list and detail views (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo)), switchable via the Root Zone / Root Anchors / TLDs tabs. The header's moon / sun switch toggles dark / light (the choice is stored in localStorage and follows the OS setting until one is made), and "View on GitHub" links to the repository. Category tabs are deep-linkable through the URL fragment, so `/diffs/<id>#DNSSEC` opens the DNSSEC filter directly. On narrow screens the diff tables scroll horizontally instead of clipping columns
+- `GET /` : list and detail views (React + [@cloudflare/kumo](https://github.com/cloudflare/kumo)), switchable via the Root Zone / Root Anchors / TLDs / TLD History tabs. The header's moon / sun switch toggles dark / light (the choice is stored in localStorage and follows the OS setting until one is made), and "View on GitHub" links to the repository. Category tabs are deep-linkable through the URL fragment, so `/diffs/<id>#DNSSEC` opens the DNSSEC filter directly. On narrow screens the diff tables scroll horizontally instead of clipping columns
 - `GET /api/diffs?page=1&per_page=20` : root zone diff history list
 - `GET /api/diffs/{id}` : root zone diff detail. Optional query params: `category=<name>` filters changes by category, and `page` / `per_page` (default 100, max 100) paginate them — when paging params are present the response also carries `changes_total` and `total_pages`. DNSKEY / CDNSKEY changes also carry `old_key` / `new_key` (`tag` / `role` / `size`), which the UI renders with the same annotation as the notifications
 - `GET /api/anchors/diffs?page=1&per_page=20` : root anchors diff history list
 - `GET /api/anchors/diffs/{id}` : root anchors diff detail (same optional params as above)
 - `GET /api/tlds/diffs?page=1&per_page=20` : TLD list diff history list
 - `GET /api/tlds/diffs/{id}` : TLD list diff detail (same optional params as above)
+- `GET /api/tld-history?page=1&per_page=20` : per-TLD history list (TLDs with change history, newest change first)
+- `GET /api/tld-history/{tld}?page=1&per_page=20` : history for one TLD. Detection events are returned newest first and each carries the changes relevant to that TLD. `stats` aggregates all events regardless of the page. RRSIG re-signing is excluded. A TLD without history returns an empty `events` list
 - `GET /api/health` : health check
 
 List and detail responses carry `ETag` headers; requests with a matching `If-None-Match` are answered with `304 Not Modified`.

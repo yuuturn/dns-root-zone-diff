@@ -25,6 +25,7 @@ import (
 	"github.com/yfujii/dns-root-diff/internal/store"
 	"github.com/yfujii/dns-root-diff/internal/telemetry"
 	"github.com/yfujii/dns-root-diff/internal/tld"
+	"github.com/yfujii/dns-root-diff/internal/tldhistory"
 	"github.com/yfujii/dns-root-diff/internal/web"
 	"github.com/yfujii/dns-root-diff/internal/whois"
 	"github.com/yfujii/dns-root-diff/internal/zone"
@@ -78,11 +79,22 @@ func runLoop(cfg config.Config, configPath string) error {
 
 	webErr := make(chan error, 1)
 	if cfg.Web.Enabled {
+		// TLD 別履歴は root zone の diff 履歴から遅延構築できるが、初回アクセスで
+		// 数秒待たせないようバックグラウンドで温めておく。構築中のリクエストは
+		// Index 内部のロックで待機し、完了後に最新の履歴を返す。
+		tldZoneHistory := tldhistory.NewIndex(cfg.DataDir)
+		go func() {
+			if err := tldZoneHistory.Refresh(); err != nil {
+				fmt.Fprintf(os.Stderr, "build TLD history index failed: %v\n", err)
+			}
+		}()
+
 		srv := &http.Server{
 			Handler: newHTTPHandler(web.New(
 				store.NewHistory(cfg.DataDir),
 				store.NewAnchorHistory(cfg.DataDir),
 				store.NewTLDHistory(cfg.DataDir),
+				tldZoneHistory,
 				web.StaticFS(),
 			).Handler()),
 		}

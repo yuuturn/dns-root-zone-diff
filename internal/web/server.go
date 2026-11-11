@@ -34,19 +34,21 @@ type HistoryReader interface {
 
 // Server は diff 閲覧用の HTTP ハンドラ群を提供する。
 type Server struct {
-	history       HistoryReader // root zone の差分履歴
-	anchorHistory HistoryReader // root anchors の差分履歴
-	tldHistory    HistoryReader // TLD リストの差分履歴
-	static        fs.FS
+	history        HistoryReader    // root zone の差分履歴
+	anchorHistory  HistoryReader    // root anchors の差分履歴
+	tldHistory     HistoryReader    // TLD リストの差分履歴
+	tldZoneHistory TLDHistoryReader // root zone diff を TLD 別に集約した履歴
+	static         fs.FS
 }
 
 // New は Server を生成する。static はフロントエンドのビルド成果物。
-func New(history, anchorHistory, tldHistory HistoryReader, static fs.FS) *Server {
+func New(history, anchorHistory, tldHistory HistoryReader, tldZoneHistory TLDHistoryReader, static fs.FS) *Server {
 	return &Server{
-		history:       history,
-		anchorHistory: anchorHistory,
-		tldHistory:    tldHistory,
-		static:        static,
+		history:        history,
+		anchorHistory:  anchorHistory,
+		tldHistory:     tldHistory,
+		tldZoneHistory: tldZoneHistory,
+		static:         static,
 	}
 }
 
@@ -59,6 +61,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/anchors/diffs/{id}", s.handleGetAnchorDiff)
 	mux.HandleFunc("GET /api/tlds/diffs", s.handleListTLDDiffs)
 	mux.HandleFunc("GET /api/tlds/diffs/{id}", s.handleGetTLDDiff)
+	mux.HandleFunc("GET /api/tld-history", s.handleListTLDHistory)
+	mux.HandleFunc("GET /api/tld-history/{tld}", s.handleGetTLDHistory)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	// 未定義の API パスは SPA フォールバックさせず 404 を返す。
 	mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) {
