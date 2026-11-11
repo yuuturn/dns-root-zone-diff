@@ -110,6 +110,63 @@ export function fetchTLDDiff(id: string, query?: DetailQuery): Promise<DiffEntry
   return getJSON(`/api/tlds/diffs/${encodeURIComponent(id)}${detailQueryString(query)}`);
 }
 
+// TLDHistorySummary は root zone の diff を TLD 単位に集約した一覧要素。
+export interface TLDHistorySummary {
+  tld: string;
+  first_detected_at: string;
+  last_detected_at: string;
+  events: number;
+  changes: number;
+  by_category: Record<string, number>;
+}
+
+export interface TLDHistoryListResponse {
+  tlds: TLDHistorySummary[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface TLDHistoryStats {
+  events: number;
+  changes: number;
+  first_detected_at: string;
+  last_detected_at: string;
+  by_category: Record<string, number>;
+}
+
+export interface TLDHistoryEvent {
+  id: string;
+  detected_at: string;
+  old_serial: string;
+  new_serial: string;
+  summary: Summary;
+  changes: Change[];
+}
+
+export interface TLDHistoryDetailResponse {
+  tld: string;
+  stats: TLDHistoryStats;
+  events: TLDHistoryEvent[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export function fetchTLDHistory(page: number, perPage: number): Promise<TLDHistoryListResponse> {
+  return getJSON(`/api/tld-history?page=${page}&per_page=${perPage}`);
+}
+
+export function fetchTLDHistoryDetail(
+  tld: string,
+  page: number,
+  perPage: number,
+): Promise<TLDHistoryDetailResponse> {
+  return getJSON(
+    `/api/tld-history/${encodeURIComponent(tld)}?page=${page}&per_page=${perPage}`,
+  );
+}
+
 export function formatDetectedAt(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;

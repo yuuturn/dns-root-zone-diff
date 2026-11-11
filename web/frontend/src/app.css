@@ -124,6 +124,7 @@ body {
 
 .app-nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.25rem;
   padding-bottom: 1rem;
   margin-bottom: 1.5rem;
@@ -264,4 +265,58 @@ body {
 
 .clickable-row {
   cursor: pointer;
+}
+
+/* TLD History: TLD 検索フォーム。
+   kumo の Input は幅を持たないため、フィールド側で伸縮させる。 */
+.tld-search {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.tld-search-field {
+  flex: 1 1 16rem;
+  max-width: 24rem;
+}
+
+.tld-search-input {
+  width: 100%;
+}
+
+.tld-search-hint {
+  margin: 0.5rem 0 0;
+  color: var(--text-color-kumo-subtle);
+  font-size: 0.875rem;
+}
+
+.tld-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.tld-link:hover {
+  text-decoration: underline;
+}
+
+/* 検知イベントごとのタイムライン。ヘッダーカードと変更テーブルを縦に並べる。 */
+.timeline-event {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.event-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  flex-wrap: wrap;
+}
+
+.event-link {
+  margin-left: auto;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: inherit;
 }
