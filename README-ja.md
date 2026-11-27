@@ -357,6 +357,14 @@ make build
 
 一覧・詳細 API は `ETag` を返し、一致する `If-None-Match` 付きリクエストには `304 Not Modified` で応答する。
 
+### `index.html` の head (テーマと favicon)
+
+`web/frontend/index.html` はソース内にコメントを置かず、head の意図はこの節にまとめる。
+
+- テーマ: React のマウント前に `data-mode` を適用してちらつきを防ぐインラインスクリプトを置いている。localStorage のキーは `theme` で、判定ロジックは `src/theme.ts` (`THEME_STORAGE_KEY` / `resolveMode`) と揃えること。未選択時は `prefers-color-scheme` に追従する
+- favicon: `/favicon.svg` はヘッダーの `GlobeHemisphereWestIcon` (@phosphor-icons) と同じ図形で、SVG 内の `prefers-color-scheme` により light (`#18181b`) / dark (`#f5f5f5`) を切り替える
+- ラスタフォールバック: SVG favicon 非対応ブラウザ (Safari 26 未満など) 向けに 32x32 / 16x16 の PNG を置く。light 版を先に、dark 版は `media="(prefers-color-scheme: dark)"` 付きで後ろに並べることで、`media` 属性を見ないブラウザは light 版を使う。`/favicon.ico` は icon 宣言が無い場合の自動取得にも使われる
+
 フロントエンドのビルド成果物は `internal/web/static/` にコミットされ、go:embed で
 バイナリに埋め込まれるため、通常のビルド・デプロイに Node.js は不要。
 フロントエンド (`web/frontend/`) を変更した場合は再ビルドして成果物ごとコミットする:

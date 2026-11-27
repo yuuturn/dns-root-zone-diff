@@ -4,8 +4,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <!-- テーマ (dark / light) を React のマウント前に適用してちらつきを防ぐ。
-         localStorage のキーとロジックは src/theme.ts と揃えること -->
     <script>
       (function () {
         var mode;
@@ -20,12 +18,7 @@
         document.documentElement.dataset.mode = mode;
       })();
     </script>
-    <!-- ヘッダーの GlobeHemisphereWestIcon (@phosphor-icons) と同じ図形の favicon。
-         SVG 内の prefers-color-scheme で light (#18181b) / dark (#f5f5f5) を切り替える -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <!-- SVG favicon 非対応ブラウザ (Safari 26 未満など) 向けラスタフォールバック。
-         light 版を先に置くことで、media 属性を見ないブラウザは light 版を使う。
-         /favicon.ico は icon 宣言が無い場合の自動取得にも使われる -->
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link
       rel="icon"

@@ -308,6 +308,14 @@ Setting `web.enabled: true` starts a web server that lets you browse diff histor
 
 List and detail responses carry `ETag` headers; requests with a matching `If-None-Match` are answered with `304 Not Modified`.
 
+### `index.html` head (theme and favicons)
+
+`web/frontend/index.html` carries no comments in the source; the intent behind its `<head>` is documented here instead.
+
+- Theme: an inline script applies `data-mode` before React mounts so the first paint does not flash. Its localStorage key is `theme`, and its logic must stay in sync with `src/theme.ts` (`THEME_STORAGE_KEY` / `resolveMode`). Until the user picks a theme it follows `prefers-color-scheme`
+- Favicon: `/favicon.svg` uses the same shape as the header's `GlobeHemisphereWestIcon` (@phosphor-icons) and switches between light (`#18181b`) and dark (`#f5f5f5`) through `prefers-color-scheme` inside the SVG
+- Raster fallback: 32x32 / 16x16 PNGs cover browsers without SVG favicon support (such as Safari before 26). The light variants come first and the dark ones follow with `media="(prefers-color-scheme: dark)"`, so browsers that ignore `media` use the light variant. `/favicon.ico` is also what gets requested automatically when no icon is declared
+
 The frontend build artifacts are committed under `internal/web/static/` and embedded into the binary via go:embed, so ordinary builds and deploys do not require Node.js. If you modify the frontend (`web/frontend/`), rebuild and commit the artifacts together:
 
 ```bash
